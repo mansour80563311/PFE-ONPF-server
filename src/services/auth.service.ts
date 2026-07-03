@@ -1,6 +1,7 @@
 import { UserRepository } from "../repositories/user.repository";
 import { comparePassword } from "../utils/hash";
 import { generateToken } from "../utils/jwt";
+import { AppError } from "../errors/AppError";
 
 export class AuthService {
   private userRepository = new UserRepository();
@@ -9,11 +10,11 @@ export class AuthService {
     const user = await this.userRepository.findByLogin(login);
 
     if (!user) {
-      throw new Error("Login ou mot de passe incorrect.");
+      throw new AppError("Login ou mot de passe incorrect.", 401);
     }
 
     if (!user.statut) {
-      throw new Error("Votre compte est désactivé.");
+        throw new AppError("Utilisateur désactivé.", 403);
     }
 
     const isPasswordValid = await comparePassword(
@@ -22,7 +23,7 @@ export class AuthService {
     );
 
     if (!isPasswordValid) {
-      throw new Error("Login ou mot de passe incorrect.");
+        throw new AppError("Login ou mot de passe incorrect.", 401);
     }
 
     const token = generateToken({
@@ -41,4 +42,9 @@ export class AuthService {
       },
     };
   }
+  async me(userId: string) {
+
+    return this.userRepository.findById(userId);
+
+    }
 }
