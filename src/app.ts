@@ -1,8 +1,7 @@
 import express from "express";
 import cors from "cors";
-
+import userRoutes from "./routes/user.routes";// Importation des routes des utilisateurs
 import authRoutes from "./routes/auth.routes"; // Importation des routes d'authentification
-
 import { errorMiddleware } from "./middlewares/error.middleware";
 
 const app = express();
@@ -15,7 +14,7 @@ app.use(express.urlencoded({ extended: true }));
 
 // Utilisation des routes
 app.use("/api/auth", authRoutes); // Utilisation des routes d'authentification
-
+app.use("/api/users", userRoutes); // Utilisation des routes des utilisateurs
 
 
 app.use(errorMiddleware);

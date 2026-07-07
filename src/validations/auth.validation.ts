@@ -1,5 +1,5 @@
 import { z } from "zod";
-
+// Schéma de validation pour la connexion
 export const loginSchema = z.object({
   login: z
     .string()
