@@ -99,15 +99,25 @@ async update(
 ) {
   await this.findById(id);
 
-  const { roleId, ...rest } = data;
+ const { roleId, password, ...rest } = data;
 
-  const updateData: Prisma.UtilisateurUpdateInput = {
-    ...rest,
+const updateData: Prisma.UtilisateurUpdateInput = {
+  ...rest,
+};
+
+if (password) {
+  updateData.password = await bcrypt.hash(password, 10);
+}
+
+if (roleId) {
+  updateData.role = {
+    connect: {
+      id: roleId,
+    },
   };
+}
 
-  if (data.password) {
-    updateData.password = await bcrypt.hash(data.password, 10);
-  }
+return this.userRepository.update(id, updateData);
 
   if (roleId) {
     updateData.role = {

@@ -18,6 +18,9 @@ model Role {
   description String?
 
   utilisateurs Utilisateur[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
 }
 
 model Utilisateur {
@@ -32,4 +35,39 @@ model Utilisateur {
 
   roleId String
   role   Role   @relation(fields: [roleId], references: [id])
+
+  demandes Demande[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+}
+enum StatutDemande {
+  EN_ATTENTE
+  EN_COURS
+  VALIDEE
+  REJETEE
+}
+
+model Demande {
+  id                 String          @id @default(uuid())
+  numero             String          @unique
+
+  nomDemandeur       String
+  prenomDemandeur    String
+  cin                String
+  telephone          String
+  email              String?
+
+  referenceFonciere  String
+  adresseBien        String
+
+  statut             StatutDemande @default(EN_ATTENTE)
+
+  observations       String?
+
+  utilisateurId      String
+  utilisateur        Utilisateur    @relation(fields: [utilisateurId], references: [id])
+
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 }

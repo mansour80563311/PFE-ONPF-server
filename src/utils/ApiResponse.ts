@@ -17,4 +17,4 @@ export class ApiResponse<T> {
   static error(message: string) {
     return new ApiResponse(false, message);
   }
-}
+}  
