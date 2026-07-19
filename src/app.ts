@@ -4,6 +4,8 @@ import userRoutes from "./routes/user.routes";// Importation des routes des util
 import authRoutes from "./routes/auth.routes"; // Importation des routes d'authentification
 import { errorMiddleware } from "./middlewares/error.middleware";
 import roleRoutes from "./routes/role.route";
+import demandeRoutes from "./routes/demande.routes";
+
 const app = express();
 
 
@@ -16,7 +18,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use("/api/auth", authRoutes); // Utilisation des routes d'authentification
 app.use("/api/users", userRoutes); // Utilisation des routes des utilisateurs
 app.use("/api/roles", roleRoutes); // Utilisation des routes des rôles
-
+app.use("/api/demandes", demandeRoutes); // Utilisation des routes des demandes
 app.use(errorMiddleware);
 
 // Route de test

@@ -3,6 +3,7 @@ import { ZodError } from "zod";
 import { AppError } from "../errors/AppError";
 
 import { ApiResponse } from "../utils/ApiResponse";
+import { Prisma } from "@prisma/client";
 
 export const errorMiddleware = (
   error: Error,
@@ -25,6 +26,14 @@ export const errorMiddleware = (
       errors: error.issues,
     });
   }
+  if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      return res.status(409).json(
+        ApiResponse.error("Cette ressource existe déjà.")
+      );
+    }
 
   console.error(error);
 
