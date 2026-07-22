@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "Demande" ADD COLUMN     "motifRejet" TEXT,
+ALTER COLUMN "updatedAt" SET DEFAULT CURRENT_TIMESTAMP;

@@ -1,8 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -13,17 +8,17 @@ datasource db {
 }
 
 model Role {
-  id          String @id @default(uuid())
-  nom         String @unique
+  id          String  @id @default(uuid())
+  nom         String  @unique
   description String?
 
   utilisateurs Utilisateur[]
 
   createdAt DateTime @default(now())
-  updatedAt DateTime @default(now()) @updatedAt
+  updatedAt DateTime @updatedAt
 }
 
-model Utilisateur {!
+model Utilisateur {
   id        String  @id @default(uuid())
   nom       String
   prenom    String
@@ -38,9 +33,12 @@ model Utilisateur {!
 
   demandes Demande[]
 
+  historiqueStatuts HistoriqueStatutDemande[]
+
   createdAt DateTime @default(now())
-  updatedAt DateTime @default(now()) @updatedAt
+  updatedAt DateTime @updatedAt
 }
+
 enum StatutDemande {
   EN_ATTENTE
   EN_COURS
@@ -49,27 +47,46 @@ enum StatutDemande {
 }
 
 model Demande {
-  id                 String          @id @default(uuid())
-  numero             String          @unique
+  id     String @id @default(uuid())
+  numero String @unique
 
-  nomDemandeur       String
-  prenomDemandeur    String
-  cin                String
-  telephone          String
-  email              String?
+  nomDemandeur    String
+  prenomDemandeur String
+  cin             String
+  telephone       String
+  email           String?
 
-  referenceFonciere  String
-  adresseBien        String
+  referenceFonciere String
+  adresseBien       String
 
-  statut             StatutDemande @default(EN_ATTENTE)
+  statut       StatutDemande @default(EN_ATTENTE)
+  observations String?
+  motifRejet   String?
 
-  observations       String?
+  utilisateurId String
+  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id])
 
-  utilisateurId      String
-  utilisateur        Utilisateur    @relation(fields: [utilisateurId], references: [id])
+  historiqueStatuts HistoriqueStatutDemande[]
 
-  createdAt          DateTime @default(now())
-  updatedAt DateTime @default(now()) @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-   @@unique([cin, referenceFonciere])
+  @@unique([cin, referenceFonciere])
+}
+
+model HistoriqueStatutDemande {
+  id            String        @id @default(uuid())
+  ancienStatut  StatutDemande
+  nouveauStatut StatutDemande
+  motif         String?
+
+  demandeId String
+  demande   Demande @relation(fields: [demandeId], references: [id], onDelete: Cascade)
+
+  utilisateurId String
+  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id])
+  createdAt     DateTime    @default(now())
+
+  @@index([demandeId])
+  @@index([utilisateurId])
 }

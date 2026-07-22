@@ -1,5 +1,9 @@
 import prisma from "../config/prisma";
-import { Prisma } from "@prisma/client";
+import { 
+  Prisma,
+  StatutDemande,
+
+} from "@prisma/client";
 
 export class DemandeRepository {
 private buildSearchFilter(
@@ -130,6 +134,74 @@ private buildSearchFilter(
     });
   }
 
+  async updateStatusWithHistory(params: {
+      id: string;
+      ancienStatut: StatutDemande;
+      nouveauStatut: StatutDemande;
+      motifRejet?: string | null;
+      utilisateurId: string;
+    }) {
+      const {
+        id,
+        ancienStatut,
+        nouveauStatut,
+        motifRejet,
+        utilisateurId,
+      } = params;
+
+      return prisma.$transaction(async (tx) => {
+        const demande =
+          await tx.demande.update({
+            where: {
+              id,
+            },
+            data: {
+              statut: nouveauStatut,
+
+              motifRejet:
+                nouveauStatut ===
+                StatutDemande.REJETEE
+                  ? motifRejet ?? null
+                  : null,
+            },
+            include: {
+              utilisateur: {
+                include: {
+                  role: true,
+                },
+              },
+            },
+          });
+
+        await tx.historiqueStatutDemande.create({
+          data: {
+            ancienStatut,
+            nouveauStatut,
+
+            motif:
+              nouveauStatut ===
+              StatutDemande.REJETEE
+                ? motifRejet ?? null
+                : null,
+
+            demande: {
+              connect: {
+                id,
+              },
+            },
+
+            utilisateur: {
+              connect: {
+                id: utilisateurId,
+              },
+            },
+          },
+        });
+
+        return demande;
+      });
+  }
+
   async delete(id: string) {
     return prisma.demande.delete({
       where: {
@@ -148,6 +220,30 @@ private buildSearchFilter(
       },
     });
   }
+
+  async findHistoryByDemandeId(
+      demandeId: string
+    ) {
+      return prisma.historiqueStatutDemande.findMany({
+        where: {
+          demandeId,
+        },
+        orderBy: {
+          createdAt: "asc",
+        },
+        include: {
+          utilisateur: {
+            select: {
+              id: true,
+              nom: true,
+              prenom: true,
+              login: true,
+            },
+          },
+        },
+      });
+    }
+
   // Méthode pour trouver une demande par CIN et référence foncière
   async findByCinAndReference(
     cin: string,

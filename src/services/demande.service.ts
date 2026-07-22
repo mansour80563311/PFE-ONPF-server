@@ -2,6 +2,7 @@ import { StatutDemande } from "@prisma/client";
 import { DemandeRepository } from "../repositories/demande.repository";
 import {
   CreateDemandeDto,
+  CreateDemandeServiceDto,
   UpdateDemandeDto,
   ListDemandesDto,
 } from "../validations/demande.validation";
@@ -40,7 +41,7 @@ export class DemandeService {
 
     return `${DemandeService.PREFIX}-${year}-${nextNumber}`;
     }
-  async create(data: CreateDemandeDto) {
+  async create(data: CreateDemandeServiceDto) {
     const utilisateur =
       await this.userRepository.findById(data.utilisateurId);
 
@@ -113,7 +114,17 @@ export class DemandeService {
   }
 
   async update(id: string, data: UpdateDemandeDto) {
-    await this.findById(id);
+    const demande = await this.findById(id);
+
+    if (
+        demande.statut === StatutDemande.VALIDEE ||
+        demande.statut === StatutDemande.REJETEE
+      ) {
+      throw new AppError(
+        "Une demande terminée ne peut plus être modifiée.",
+        400
+      );
+    }
 
     return this.demandeRepository.update(id, {
       ...(data.nomDemandeur !== undefined  && {
@@ -145,18 +156,92 @@ export class DemandeService {
 
   async updateStatus(
     id: string,
-    statut: StatutDemande
-) {
-    await this.findById(id);
+    nouveauStatut: StatutDemande,
+    utilisateurId: string,
+    motifRejet?: string
+    
+  ) {
+    const demande = await this.findById(id);
 
-    return this.demandeRepository.update(id, {
-        statut,
-    });
-}
+    const transitionsAutorisees: Record<
+      StatutDemande,
+      StatutDemande[]
+    > = {
+      [StatutDemande.EN_ATTENTE]: [
+        StatutDemande.EN_COURS,
+      ],
 
+      [StatutDemande.EN_COURS]: [
+        StatutDemande.VALIDEE,
+        StatutDemande.REJETEE,
+      ],
+
+      [StatutDemande.VALIDEE]: [],
+
+      [StatutDemande.REJETEE]: [],
+    };
+
+    const transitionAutorisee =
+      transitionsAutorisees[demande.statut].includes(
+        nouveauStatut
+      );
+
+    if (!transitionAutorisee) {
+      throw new AppError(
+        `Le passage du statut ${demande.statut} vers ${nouveauStatut} n'est pas autorisé.`,
+        400
+      );
+    }
+
+    if (
+      nouveauStatut === StatutDemande.REJETEE &&
+      !motifRejet?.trim()
+    ) {
+      throw new AppError(
+        "Le motif de rejet est obligatoire.",
+        400
+      );
+    }
+
+    return this.demandeRepository
+      .updateStatusWithHistory({
+        id,
+
+        ancienStatut: demande.statut,
+
+        nouveauStatut,
+
+        utilisateurId,
+
+        motifRejet:
+          nouveauStatut ===
+          StatutDemande.REJETEE
+            ? motifRejet!.trim()
+            : null,
+      });
+  }
+  
   async delete(id: string) {
-    await this.findById(id);
+    const demande = await this.findById(id);
+
+    if (
+      demande.statut === StatutDemande.VALIDEE ||
+      demande.statut === StatutDemande.REJETEE
+    ) {
+      throw new AppError(
+        "Une demande terminée ne peut plus être supprimée.",
+        400
+      );
+    }
 
     return this.demandeRepository.delete(id);
   }
+  
+   async findHistory(id: string) {
+    await this.findById(id);
+
+    return this.demandeRepository
+      .findHistoryByDemandeId(id);
+  }
 }
+

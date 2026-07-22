@@ -1,3 +1,4 @@
+import { StatutDemande } from "@prisma/client";
 import { z } from "zod";
 
 export const createDemandeSchema = z.object({
@@ -34,7 +35,7 @@ export const createDemandeSchema = z.object({
     .string()
     .optional(),
 
-  utilisateurId: z.uuid("Utilisateur invalide."),
+  
 });
 
 export const updateDemandeSchema =
@@ -42,6 +43,11 @@ export const updateDemandeSchema =
 
 export type CreateDemandeDto =
   z.infer<typeof createDemandeSchema>;
+
+export type CreateDemandeServiceDto =
+  CreateDemandeDto & {
+    utilisateurId: string;
+  };
 
 export type UpdateDemandeDto =
   z.infer<typeof updateDemandeSchema>;
@@ -56,4 +62,39 @@ export const listDemandesSchema = z.object({
 
 export type ListDemandesDto = z.infer<
   typeof listDemandesSchema
+>;
+
+export const updateDemandeStatusSchema = z
+  .object({
+    statut: z.nativeEnum(StatutDemande),
+
+    motifRejet: z
+      .string()
+      .trim()
+      .min(
+        5,
+        "Le motif de rejet doit contenir au moins 5 caractères."
+      )
+      .max(
+        500,
+        "Le motif de rejet ne peut pas dépasser 500 caractères."
+      )
+      .optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (
+      data.statut === StatutDemande.REJETEE &&
+      !data.motifRejet
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["motifRejet"],
+        message:
+          "Le motif de rejet est obligatoire lorsqu’une demande est rejetée.",
+      });
+    }
+  });
+
+export type UpdateDemandeStatusDto = z.infer<
+  typeof updateDemandeStatusSchema
 >;
