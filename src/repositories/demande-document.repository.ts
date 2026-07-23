@@ -114,6 +114,21 @@ export class DemandeDocumentRepository {
     });
   }
 
+  async findForValidation(
+    demandeId: string
+  ) {
+    return prisma.demandeDocument.findMany({
+      where: {
+        demandeId,
+      },
+      select: {
+        type: true,
+        statut: true,
+        motifNonConformite: true,
+      },
+    });
+  }
+
   async delete(id: string) {
   return prisma.demandeDocument.delete({
     where: {

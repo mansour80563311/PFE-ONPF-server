@@ -1,20 +1,26 @@
-import { StatutDemande } from "@prisma/client";
+import {
+  StatutDemande,
+  StatutDocument,
+  TypeDocument,
+} from "@prisma/client";
 import { DemandeRepository } from "../repositories/demande.repository";
 import {
-  CreateDemandeDto,
   CreateDemandeServiceDto,
   UpdateDemandeDto,
   ListDemandesDto,
 } from "../validations/demande.validation";
 import { UserRepository } from "../repositories/user.repository";
 import { AppError } from "../errors/AppError";
-
-
+import {
+  DemandeDocumentRepository,
+} from "../repositories/demande-document.repository";
 
 export class DemandeService {
     private static readonly PREFIX = "DF";
     private demandeRepository = new DemandeRepository();
     private userRepository = new UserRepository();
+    private documentRepository =
+      new DemandeDocumentRepository();
     // Méthode privée pour générer un numéro unique pour chaque demande
     private async generateNumero(): Promise<string> {
     const lastDemande =
@@ -83,7 +89,7 @@ export class DemandeService {
     });
   }
 
-    async findAll(query: ListDemandesDto) {
+  async findAll(query: ListDemandesDto) {
     const { page, limit, search } = query;
 
     const result = await this.demandeRepository.findAll(
@@ -154,6 +160,94 @@ export class DemandeService {
     });
   }
 
+  private async verifyDocumentsBeforeValidation(
+    demandeId: string
+  ): Promise<void> {
+    const documents =
+      await this.documentRepository
+        .findForValidation(demandeId);
+
+    const identityDocument = documents.find(
+      (document) =>
+        document.type === TypeDocument.CIN ||
+        document.type === TypeDocument.PASSEPORT
+    );
+
+    const contrat = documents.find(
+      (document) =>
+        document.type === TypeDocument.CONTRAT
+    );
+
+    const procuration = documents.find(
+      (document) =>
+        document.type ===
+        TypeDocument.PROCURATION
+    );
+
+    const piecesManquantes: string[] = [];
+    const piecesNonConformes: string[] = [];
+
+    if (!identityDocument) {
+      piecesManquantes.push(
+        "CIN ou passeport"
+      );
+    } else if (
+      identityDocument.statut !==
+      StatutDocument.CONFORME
+    ) {
+      piecesNonConformes.push(
+        "CIN ou passeport"
+      );
+    }
+
+    if (!contrat) {
+      piecesManquantes.push("contrat");
+    } else if (
+      contrat.statut !== StatutDocument.CONFORME
+    ) {
+      piecesNonConformes.push("contrat");
+    }
+
+    if (!procuration) {
+      piecesManquantes.push("procuration");
+    } else if (
+      procuration.statut !==
+      StatutDocument.CONFORME
+    ) {
+      piecesNonConformes.push("procuration");
+    }
+
+    if (
+      piecesManquantes.length > 0 ||
+      piecesNonConformes.length > 0
+    ) {
+      const details: string[] = [];
+
+      if (piecesManquantes.length > 0) {
+        details.push(
+          `Pièces manquantes : ${piecesManquantes.join(
+            ", "
+          )}.`
+        );
+      }
+
+      if (piecesNonConformes.length > 0) {
+        details.push(
+          `Pièces non conformes ou non vérifiées : ${piecesNonConformes.join(
+            ", "
+          )}.`
+        );
+      }
+
+      throw new AppError(
+        `La demande ne peut pas être validée. ${details.join(
+          " "
+        )}`,
+        400
+      );
+    }
+  }
+
   async updateStatus(
     id: string,
     nouveauStatut: StatutDemande,
@@ -200,6 +294,15 @@ export class DemandeService {
       throw new AppError(
         "Le motif de rejet est obligatoire.",
         400
+      );
+    }
+
+    if (
+      nouveauStatut ===
+      StatutDemande.VALIDEE
+    ) {
+      await this.verifyDocumentsBeforeValidation(
+        id
       );
     }
 
