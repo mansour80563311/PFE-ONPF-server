@@ -55,6 +55,15 @@ router.delete(
   )
 );
 
+// Vérifier la conformité d’une pièce
+router.patch(
+  "/:id/documents/:documentId/status",
+  roleMiddleware("ADMIN", "AGENT"),
+  demandeDocumentController.updateStatus.bind(
+    demandeDocumentController
+  )
+);
+
 // Liste des demandes
 router.get(
   "/",

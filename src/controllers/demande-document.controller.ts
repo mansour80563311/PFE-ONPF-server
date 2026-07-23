@@ -12,6 +12,9 @@ import { removeFileIfExists } from "../utils/file";
 import {
   uploadDemandeDocumentSchema,
 } from "../validations/demande-document.validation";
+import {
+  updateDocumentStatusSchema,
+} from "../validations/demande-document-status.validation";
 
 type DemandeParams = {
   id: string;
@@ -75,7 +78,7 @@ export class DemandeDocumentController {
     }
   }
 
-    async download(
+  async download(
     req: Request<DocumentParams>,
     res: Response,
     next: NextFunction
@@ -121,6 +124,36 @@ export class DemandeDocumentController {
         ApiResponse.success(
           "Documents de la demande récupérés.",
           documents
+        )
+      );
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async updateStatus(
+    req: Request<DocumentParams>,
+    res: Response,
+    next: NextFunction
+  ) {
+    try {
+      const data =
+        updateDocumentStatusSchema.parse(
+          req.body
+        );
+
+      const document =
+        await this.documentService.updateStatus(
+          req.params.id,
+          req.params.documentId,
+          data.statut,
+          data.motifNonConformite
+        );
+
+      return res.json(
+        ApiResponse.success(
+          "Statut du document mis à jour avec succès.",
+          document
         )
       );
     } catch (error) {

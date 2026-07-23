@@ -2,6 +2,7 @@ import path from "node:path";
 
 import {
   StatutDemande,
+  StatutDocument,
   TypeDocument,
 } from "@prisma/client";
 
@@ -188,7 +189,82 @@ export class DemandeDocumentService {
       .findAllByDemandeId(demandeId);
   }
 
-    async delete(
+  async updateStatus(
+    demandeId: string,
+    documentId: string,
+    statut: StatutDocument,
+    motifNonConformite?: string
+  ) {
+    const demande =
+      await this.demandeRepository.findById(
+        demandeId
+      );
+
+    if (!demande) {
+      throw new AppError(
+        "Demande introuvable.",
+        404
+      );
+    }
+
+    if (
+      demande.statut ===
+        StatutDemande.VALIDEE ||
+      demande.statut ===
+        StatutDemande.REJETEE
+    ) {
+      throw new AppError(
+        "Impossible de vérifier un document appartenant à une demande terminée.",
+        400
+      );
+    }
+
+    const document =
+      await this.documentRepository.findById(
+        documentId
+      );
+
+    if (
+      !document ||
+      document.demandeId !== demandeId
+    ) {
+      throw new AppError(
+        "Document introuvable pour cette demande.",
+        404
+      );
+    }
+
+    if (
+      document.statut !==
+      StatutDocument.DEPOSE
+    ) {
+      throw new AppError(
+        "Ce document a déjà été vérifié.",
+        400
+      );
+    }
+
+    if (
+      statut ===
+        StatutDocument.NON_CONFORME &&
+      !motifNonConformite?.trim()
+    ) {
+      throw new AppError(
+        "Le motif de non-conformité est obligatoire.",
+        400
+      );
+    }
+
+    return this.documentRepository.updateStatus(
+      documentId,
+      statut,
+      statut === StatutDocument.NON_CONFORME
+        ? motifNonConformite!.trim()
+        : null
+    );
+  }
+
+  async delete(
     demandeId: string,
     documentId: string
     ) {

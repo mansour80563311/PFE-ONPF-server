@@ -1,5 +1,6 @@
 import {
   Prisma,
+  StatutDocument,
   TypeDocument,
 } from "@prisma/client";
 
@@ -84,6 +85,35 @@ export class DemandeDocumentRepository {
       },
     });
   }
+
+  async updateStatus(
+    id: string,
+    statut: StatutDocument,
+    motifNonConformite?: string | null
+  ) {
+    return prisma.demandeDocument.update({
+      where: {
+        id,
+      },
+
+      data: {
+        statut,
+        motifNonConformite,
+      },
+
+      include: {
+        utilisateur: {
+          select: {
+            id: true,
+            nom: true,
+            prenom: true,
+            login: true,
+          },
+        },
+      },
+    });
+  }
+
   async delete(id: string) {
   return prisma.demandeDocument.delete({
     where: {
