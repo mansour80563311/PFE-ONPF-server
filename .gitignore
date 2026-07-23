@@ -5,3 +5,4 @@ prisma/dev.db
 build/
 coverage/
 *.log
+uploads/

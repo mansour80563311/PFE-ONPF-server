@@ -33,7 +33,8 @@ model Utilisateur {
 
   demandes Demande[]
 
-  historiqueStatuts HistoriqueStatutDemande[]
+  historiqueStatuts   HistoriqueStatutDemande[]
+  documentsTeleverses DemandeDocument[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -44,6 +45,19 @@ enum StatutDemande {
   EN_COURS
   VALIDEE
   REJETEE
+}
+
+enum TypeDocument {
+  CIN
+  PASSEPORT
+  CONTRAT
+  PROCURATION
+}
+
+enum StatutDocument {
+  DEPOSE
+  CONFORME
+  NON_CONFORME
 }
 
 model Demande {
@@ -66,7 +80,8 @@ model Demande {
   utilisateurId String
   utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id])
 
-  historiqueStatuts HistoriqueStatutDemande[]
+  historiqueStatuts   HistoriqueStatutDemande[]
+  documentsTeleverses DemandeDocument[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -87,6 +102,34 @@ model HistoriqueStatutDemande {
   utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id])
   createdAt     DateTime    @default(now())
 
+  @@index([demandeId])
+  @@index([utilisateurId])
+}
+
+model DemandeDocument {
+  id String @id @default(uuid())
+
+  type TypeDocument
+
+  nomOriginal   String
+  nomStockage   String @unique
+  cheminFichier String
+  mimeType      String
+  taille        Int
+
+  statut             StatutDocument @default(DEPOSE)
+  motifNonConformite String?
+
+  demandeId String
+  demande   Demande @relation(fields: [demandeId], references: [id], onDelete: Cascade)
+
+  utilisateurId String
+  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([demandeId, type])
   @@index([demandeId])
   @@index([utilisateurId])
 }
