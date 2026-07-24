@@ -35,6 +35,7 @@ model Utilisateur {
 
   historiqueStatuts   HistoriqueStatutDemande[]
   documentsTeleverses DemandeDocument[]
+  journauxCloture     JournalCloture[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -77,6 +78,9 @@ model Demande {
   observations String?
   motifRejet   String?
 
+  journalClotureId String?
+  journalCloture   JournalCloture? @relation(fields: [journalClotureId], references: [id])
+
   utilisateurId String
   utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id])
 
@@ -87,6 +91,7 @@ model Demande {
   updatedAt DateTime @updatedAt
 
   @@unique([cin, referenceFonciere])
+  @@index([journalClotureId])
 }
 
 model HistoriqueStatutDemande {
@@ -132,4 +137,24 @@ model DemandeDocument {
   @@unique([demandeId, type])
   @@index([demandeId])
   @@index([utilisateurId])
+}
+
+model JournalCloture {
+  id     String @id @default(uuid())
+  numero String @unique
+
+  dateJour    DateTime @unique @db.Date
+  dateCloture DateTime @default(now())
+
+  observations String?
+
+  responsableId String
+  responsable   Utilisateur @relation(fields: [responsableId], references: [id])
+
+  demandes Demande[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([responsableId])
 }
