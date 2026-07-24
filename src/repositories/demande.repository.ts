@@ -106,11 +106,25 @@ private buildSearchFilter(
 
   async findById(id: string) {
     return prisma.demande.findUnique({
-      where: { id },
+      where: {
+        id,
+      },
       include: {
         utilisateur: {
           include: {
             role: true,
+          },
+        },
+        journalCloture: {
+          include: {
+            responsable: {
+              select: {
+                id: true,
+                nom: true,
+                prenom: true,
+                login: true,
+              },
+            },
           },
         },
       },

@@ -6,6 +6,7 @@ import { errorMiddleware } from "./middlewares/error.middleware";
 import roleRoutes from "./routes/role.route";
 import demandeRoutes from "./routes/demande.routes";
 import journalClotureRoutes from "./routes/journal-cloture.routes";
+import dashboardRoutes from "./routes/dashboard.routes";
 
 const app = express();
 
@@ -21,6 +22,7 @@ app.use("/api/users", userRoutes); // Utilisation des routes des utilisateurs
 app.use("/api/roles", roleRoutes); // Utilisation des routes des rôles
 app.use("/api/demandes", demandeRoutes); // Utilisation des routes des demandes
 app.use("/api/journaux-cloture",journalClotureRoutes);
+app.use("/api/dashboard",dashboardRoutes);
 app.use(errorMiddleware);
 
 // Route de test
