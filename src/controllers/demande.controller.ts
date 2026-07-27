@@ -139,6 +139,7 @@ export class DemandeController {
         data.statut,
         
         req.user!.userId,
+        req.user!.role,
         data.motifRejet
       );
       return res.json(

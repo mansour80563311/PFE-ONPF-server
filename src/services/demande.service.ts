@@ -252,10 +252,77 @@ export class DemandeService {
     id: string,
     nouveauStatut: StatutDemande,
     utilisateurId: string,
+    role: string,
     motifRejet?: string
-    
   ) {
     const demande = await this.findById(id);
+
+    /*
+    * Vérification des autorisations
+    * selon le rôle de l’utilisateur connecté.
+    */
+
+    const isAdmin = role === "ADMIN";
+    const isAgent = role === "AGENT";
+    const isResponsable =
+      role === "RESPONSABLE";
+
+    /*
+    * Seuls l’Administrateur et l’Agent
+    * peuvent transmettre une demande.
+    */
+    if (
+      nouveauStatut ===
+        StatutDemande.EN_COURS &&
+      !isAdmin &&
+      !isAgent
+    ) {
+      throw new AppError(
+        "Seul un agent peut transmettre une demande au responsable.",
+        403
+      );
+    }
+
+    /*
+    * Seuls l’Administrateur et le Responsable
+    * peuvent valider ou rejeter une demande.
+    */
+    if (
+      (
+        nouveauStatut ===
+          StatutDemande.VALIDEE ||
+        nouveauStatut ===
+          StatutDemande.REJETEE
+      ) &&
+      !isAdmin &&
+      !isResponsable
+    ) {
+      throw new AppError(
+        "Seul un responsable peut valider ou rejeter une demande.",
+        403
+      );
+    }
+
+    /*
+    * Un Agent ne peut transmettre
+    * que les demandes qu’il a créées.
+    */
+    if (
+      isAgent &&
+      nouveauStatut ===
+        StatutDemande.EN_COURS &&
+      demande.utilisateurId !==
+        utilisateurId
+    ) {
+      throw new AppError(
+        "Vous ne pouvez transmettre que vos propres demandes.",
+        403
+      );
+    }
+
+    /*
+    * Vérification de la transition métier.
+    */
 
     const transitionsAutorisees: Record<
       StatutDemande,
@@ -276,9 +343,9 @@ export class DemandeService {
     };
 
     const transitionAutorisee =
-      transitionsAutorisees[demande.statut].includes(
-        nouveauStatut
-      );
+      transitionsAutorisees[
+        demande.statut
+      ].includes(nouveauStatut);
 
     if (!transitionAutorisee) {
       throw new AppError(
@@ -287,8 +354,13 @@ export class DemandeService {
       );
     }
 
+    /*
+    * Le motif est obligatoire en cas de rejet.
+    */
+
     if (
-      nouveauStatut === StatutDemande.REJETEE &&
+      nouveauStatut ===
+        StatutDemande.REJETEE &&
       !motifRejet?.trim()
     ) {
       throw new AppError(
@@ -296,6 +368,10 @@ export class DemandeService {
         400
       );
     }
+
+    /*
+    * Vérification des pièces avant validation.
+    */
 
     if (
       nouveauStatut ===
@@ -306,11 +382,17 @@ export class DemandeService {
       );
     }
 
+    /*
+    * Mise à jour du statut et création
+    * de l’historique dans la transaction.
+    */
+
     return this.demandeRepository
       .updateStatusWithHistory({
         id,
 
-        ancienStatut: demande.statut,
+        ancienStatut:
+          demande.statut,
 
         nouveauStatut,
 

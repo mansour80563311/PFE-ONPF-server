@@ -12,6 +12,7 @@ import { removeFileIfExists } from "../utils/file";
 import {
   uploadDemandeDocumentSchema,
 } from "../validations/demande-document.validation";
+
 import {
   updateDocumentStatusSchema,
 } from "../validations/demande-document-status.validation";
@@ -53,17 +54,33 @@ export class DemandeDocumentController {
           req.body
         );
     } catch (error) {
-      await removeFileIfExists(file.path);
+      /*
+       * Multer a déjà enregistré le fichier.
+       * Si Zod rejette les données, il faut
+       * supprimer ce fichier.
+       */
+      await removeFileIfExists(
+        file.path
+      );
+
       return next(error);
     }
 
     try {
       const document =
         await this.documentService.upload({
-          demandeId: req.params.id,
+          demandeId:
+            req.params.id,
+
           utilisateurId:
             req.user!.userId,
-          type: data.type,
+
+          role:
+            req.user!.role,
+
+          type:
+            data.type,
+
           file,
         });
 
@@ -82,32 +99,36 @@ export class DemandeDocumentController {
     req: Request<DocumentParams>,
     res: Response,
     next: NextFunction
-    ) {
+  ) {
     try {
-        const downloadInfo =
-        await this.documentService.getDownloadInfo(
+      const downloadInfo =
+        await this.documentService
+          .getDownloadInfo(
             req.params.id,
             req.params.documentId
-        );
+          );
 
-        res.setHeader(
+      res.setHeader(
         "Content-Type",
         downloadInfo.mimeType
-        );
+      );
 
-        return res.download(
+      return res.download(
         downloadInfo.absolutePath,
         downloadInfo.nomOriginal,
         (error) => {
-            if (error && !res.headersSent) {
+          if (
+            error &&
+            !res.headersSent
+          ) {
             next(error);
-            }
+          }
         }
-        );
+      );
     } catch (error) {
-        next(error);
+      next(error);
     }
-    }
+  }
 
   async findAll(
     req: Request<DemandeParams>,
@@ -116,9 +137,10 @@ export class DemandeDocumentController {
   ) {
     try {
       const documents =
-        await this.documentService.findAll(
-          req.params.id
-        );
+        await this.documentService
+          .findAll(
+            req.params.id
+          );
 
       return res.json(
         ApiResponse.success(
@@ -143,12 +165,14 @@ export class DemandeDocumentController {
         );
 
       const document =
-        await this.documentService.updateStatus(
-          req.params.id,
-          req.params.documentId,
-          data.statut,
-          data.motifNonConformite
-        );
+        await this.documentService
+          .updateStatus(
+            req.params.id,
+            req.params.documentId,
+            data.statut,
+            req.user!.role,
+            data.motifNonConformite
+          );
 
       return res.json(
         ApiResponse.success(
@@ -165,20 +189,22 @@ export class DemandeDocumentController {
     req: Request<DocumentParams>,
     res: Response,
     next: NextFunction
-    ) {
+  ) {
     try {
-        await this.documentService.delete(
+      await this.documentService.delete(
         req.params.id,
-        req.params.documentId
-        );
+        req.params.documentId,
+        req.user!.userId,
+        req.user!.role
+      );
 
-        return res.json(
+      return res.json(
         ApiResponse.success(
-            "Document supprimé avec succès."
+          "Document supprimé avec succès."
         )
-        );
+      );
     } catch (error) {
-        next(error);
+      next(error);
     }
-    }
+  }
 }

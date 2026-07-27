@@ -18,19 +18,34 @@ const demandeController =
 const demandeDocumentController =
   new DemandeDocumentController();
 
+/*
+ * Toutes les routes suivantes nécessitent
+ * un utilisateur authentifié.
+ */
 router.use(authMiddleware);
 
-// Ajouter une pièce justificative
+/*
+ * DOCUMENTS
+ */
+
+// Ajouter une pièce justificative :
+// Administrateur ou Agent uniquement
 router.post(
   "/:id/documents",
-  roleMiddleware("ADMIN", "AGENT"),
-  uploadDemandeDocument.single("document"),
+  roleMiddleware(
+    "ADMIN",
+    "AGENT"
+  ),
+  uploadDemandeDocument.single(
+    "document"
+  ),
   demandeDocumentController.upload.bind(
     demandeDocumentController
   )
 );
 
-// Lister les pièces justificatives
+// Lister les pièces justificatives :
+// tous les utilisateurs authentifiés
 router.get(
   "/:id/documents",
   demandeDocumentController.findAll.bind(
@@ -38,7 +53,8 @@ router.get(
   )
 );
 
-// Télécharger un document
+// Télécharger un document :
+// tous les utilisateurs authentifiés
 router.get(
   "/:id/documents/:documentId/download",
   demandeDocumentController.download.bind(
@@ -46,23 +62,35 @@ router.get(
   )
 );
 
-// Supprimer un document
+// Supprimer un document :
+// Administrateur ou Agent uniquement
 router.delete(
   "/:id/documents/:documentId",
-  roleMiddleware("ADMIN", "AGENT"),
+  roleMiddleware(
+    "ADMIN",
+    "AGENT"
+  ),
   demandeDocumentController.delete.bind(
     demandeDocumentController
   )
 );
 
-// Vérifier la conformité d’une pièce
+// Vérifier la conformité d’une pièce :
+// Administrateur ou Responsable uniquement
 router.patch(
   "/:id/documents/:documentId/status",
-  roleMiddleware("ADMIN", "AGENT"),
+  roleMiddleware(
+    "ADMIN",
+    "RESPONSABLE"
+  ),
   demandeDocumentController.updateStatus.bind(
     demandeDocumentController
   )
 );
+
+/*
+ * DEMANDES
+ */
 
 // Liste des demandes
 router.get(
@@ -72,7 +100,7 @@ router.get(
   )
 );
 
-// Historique d'une demande
+// Historique d’une demande
 router.get(
   "/:id/history",
   demandeController.findHistory.bind(
@@ -80,10 +108,13 @@ router.get(
   )
 );
 
-// Création
+// Création d’une demande
 router.post(
   "/",
-  roleMiddleware("ADMIN", "AGENT"),
+  roleMiddleware(
+    "ADMIN",
+    "AGENT"
+  ),
   demandeController.create.bind(
     demandeController
   )
@@ -92,13 +123,17 @@ router.post(
 // Mise à jour du statut
 router.patch(
   "/:id/status",
-  roleMiddleware("ADMIN", "AGENT"),
+  roleMiddleware(
+    "ADMIN",
+    "AGENT",
+    "RESPONSABLE"
+  ),
   demandeController.updateStatus.bind(
     demandeController
   )
 );
 
-// Une demande
+// Consulter une demande
 router.get(
   "/:id",
   demandeController.findById.bind(
@@ -106,16 +141,19 @@ router.get(
   )
 );
 
-// Modification
+// Modifier une demande
 router.put(
   "/:id",
-  roleMiddleware("ADMIN", "AGENT"),
+  roleMiddleware(
+    "ADMIN",
+    "AGENT"
+  ),
   demandeController.update.bind(
     demandeController
   )
 );
 
-// Suppression
+// Supprimer une demande
 router.delete(
   "/:id",
   roleMiddleware("ADMIN"),
@@ -123,6 +161,5 @@ router.delete(
     demandeController
   )
 );
-
 
 export default router;
