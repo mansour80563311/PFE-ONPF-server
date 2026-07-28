@@ -105,7 +105,9 @@ export class DemandeDocumentController {
         await this.documentService
           .getDownloadInfo(
             req.params.id,
-            req.params.documentId
+            req.params.documentId,
+            req.user!.userId,
+            req.user!.role
           );
 
       res.setHeader(
@@ -139,7 +141,9 @@ export class DemandeDocumentController {
       const documents =
         await this.documentService
           .findAll(
-            req.params.id
+            req.params.id,
+            req.user!.userId,
+            req.user!.role
           );
 
       return res.json(
@@ -152,7 +156,6 @@ export class DemandeDocumentController {
       next(error);
     }
   }
-
   async updateStatus(
     req: Request<DocumentParams>,
     res: Response,

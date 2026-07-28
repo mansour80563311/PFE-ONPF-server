@@ -156,7 +156,10 @@ router.put(
 // Supprimer une demande
 router.delete(
   "/:id",
-  roleMiddleware("ADMIN"),
+  roleMiddleware(
+    "ADMIN",
+    "AGENT"
+  ),
   demandeController.delete.bind(
     demandeController
   )

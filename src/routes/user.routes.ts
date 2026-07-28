@@ -1,41 +1,88 @@
-import { Router } from "express";
-import { UserController } from "../controllers/user.controller";
-import { authMiddleware } from "../middlewares/auth.middleware";
-import { roleMiddleware } from "../middlewares/role.middleware";
+import {
+  Router,
+} from "express";
+
+import {
+  UserController,
+} from "../controllers/user.controller";
+
+import {
+  authMiddleware,
+} from "../middlewares/auth.middleware";
+
+import {
+  roleMiddleware,
+} from "../middlewares/role.middleware";
 
 const router = Router();
-const userController = new UserController();
-// Protéger toutes les routes
+
+const userController =
+  new UserController();
+
+/*
+ * Toutes les routes de gestion des
+ * utilisateurs nécessitent une
+ * authentification.
+ */
 router.use(authMiddleware);
-// Routes de consultation
-router.get(
-  "/",
-  userController.findAll.bind(userController)
+
+/*
+ * La gestion des utilisateurs est
+ * exclusivement réservée à
+ * l’Administrateur.
+ */
+router.use(
+  roleMiddleware("ADMIN")
 );
 
+/*
+ * Liste des utilisateurs.
+ */
+router.get(
+  "/",
+  userController.findAll.bind(
+    userController
+  )
+);
+
+/*
+ * Consultation d’un utilisateur.
+ */
 router.get(
   "/:id",
-  userController.findById.bind(userController)
+  userController.findById.bind(
+    userController
+  )
 );
-// Crée un utilisateur (accessible uniquement aux administrateurs)
+
+/*
+ * Création d’un utilisateur.
+ */
 router.post(
   "/",
-  roleMiddleware("ADMIN"),
-  userController.create.bind(userController)
+  userController.create.bind(
+    userController
+  )
 );
 
-// Mettre à jour un utilisateur (accessible uniquement aux administrateurs)
+/*
+ * Mise à jour d’un utilisateur.
+ */
 router.put(
   "/:id",
-  roleMiddleware("ADMIN"),
-  userController.update.bind(userController)
+  userController.update.bind(
+    userController
+  )
 );
 
-// Supprimer un utilisateur (accessible uniquement aux administrateurs)
+/*
+ * Suppression d’un utilisateur.
+ */
 router.delete(
   "/:id",
-  roleMiddleware("ADMIN"),
-  userController.delete.bind(userController)
+  userController.delete.bind(
+    userController
+  )
 );
 
 export default router;

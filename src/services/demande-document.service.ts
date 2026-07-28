@@ -20,12 +20,62 @@ interface UploadDocumentParams {
   file: Express.Multer.File;
 }
 
+interface DemandeAccessData {
+  utilisateurId: string;
+  statut: StatutDemande;
+}
+
 export class DemandeDocumentService {
   private demandeRepository =
     new DemandeRepository();
 
   private documentRepository =
     new DemandeDocumentRepository();
+
+    /**
+   * Contrôle l’accès en lecture aux documents
+   * d’une demande.
+   *
+   * ADMIN :
+   * accès à toutes les demandes.
+   *
+   * AGENT :
+   * accès uniquement à ses propres demandes.
+   *
+   * RESPONSABLE :
+   * accès aux demandes EN_COURS, VALIDEE
+   * ou REJETEE, mais jamais EN_ATTENTE.
+   */
+  private assertCanReadDocuments(
+    demande: DemandeAccessData,
+    utilisateurId: string,
+    role: string
+  ): void {
+    if (role === "ADMIN") {
+      return;
+    }
+
+    if (
+      role === "AGENT" &&
+      demande.utilisateurId ===
+        utilisateurId
+    ) {
+      return;
+    }
+
+    if (
+      role === "RESPONSABLE" &&
+      demande.statut !==
+        StatutDemande.EN_ATTENTE
+    ) {
+      return;
+    }
+
+    throw new AppError(
+      "Vous n’êtes pas autorisé à consulter les documents de cette demande.",
+      403
+    );
+  }
 
   /**
    * Ajouter une pièce justificative.
@@ -181,11 +231,14 @@ export class DemandeDocumentService {
   }
 
   /**
-   * Préparer le téléchargement d’un document.
+   * Préparer le téléchargement d’un document
+   * après vérification des autorisations.
    */
   async getDownloadInfo(
     demandeId: string,
-    documentId: string
+    documentId: string,
+    utilisateurId: string,
+    role: string
   ) {
     const demande =
       await this.demandeRepository.findById(
@@ -198,6 +251,12 @@ export class DemandeDocumentService {
         404
       );
     }
+
+    this.assertCanReadDocuments(
+      demande,
+      utilisateurId,
+      role
+    );
 
     const document =
       await this.documentRepository.findById(
@@ -238,10 +297,13 @@ export class DemandeDocumentService {
   }
 
   /**
-   * Récupérer les documents d’une demande.
+   * Récupérer les documents d’une demande
+   * après vérification des autorisations.
    */
   async findAll(
-    demandeId: string
+    demandeId: string,
+    utilisateurId: string,
+    role: string
   ) {
     const demande =
       await this.demandeRepository.findById(
@@ -254,6 +316,12 @@ export class DemandeDocumentService {
         404
       );
     }
+
+    this.assertCanReadDocuments(
+      demande,
+      utilisateurId,
+      role
+    );
 
     return this.documentRepository
       .findAllByDemandeId(

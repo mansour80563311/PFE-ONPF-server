@@ -1,16 +1,21 @@
-import {
+import type {
   NextFunction,
   Request,
   Response,
 } from "express";
 
-import { DemandeService } from "../services/demande.service";
-import { ApiResponse } from "../utils/ApiResponse";
+import {
+  DemandeService,
+} from "../services/demande.service";
+
+import {
+  ApiResponse,
+} from "../utils/ApiResponse";
 
 import {
   createDemandeSchema,
-  updateDemandeSchema,
   listDemandesSchema,
+  updateDemandeSchema,
   updateDemandeStatusSchema,
 } from "../validations/demande.validation";
 
@@ -19,7 +24,8 @@ type DemandeParams = {
 };
 
 export class DemandeController {
-  private demandeService = new DemandeService();
+  private demandeService =
+    new DemandeService();
 
   async findAll(
     req: Request,
@@ -27,12 +33,18 @@ export class DemandeController {
     next: NextFunction
   ) {
     try {
-      const query = listDemandesSchema.parse(
-        req.query
-      );
+      const query =
+        listDemandesSchema.parse(
+          req.query
+        );
 
       const result =
-        await this.demandeService.findAll(query);
+        await this.demandeService
+          .findAll(
+            query,
+            req.user!.userId,
+            req.user!.role
+          );
 
       return res.json(
         ApiResponse.success(
@@ -53,9 +65,12 @@ export class DemandeController {
   ) {
     try {
       const demande =
-        await this.demandeService.findById(
-          req.params.id
-        );
+        await this.demandeService
+          .findById(
+            req.params.id,
+            req.user!.userId,
+            req.user!.role
+          );
 
       return res.json(
         ApiResponse.success(
@@ -74,15 +89,23 @@ export class DemandeController {
     next: NextFunction
   ) {
     try {
-      const data = createDemandeSchema.parse(
-        req.body
-      );
+      const data =
+        createDemandeSchema.parse(
+          req.body
+        );
 
       const demande =
-        await this.demandeService.create({
-          ...data,
-          utilisateurId: req.user!.userId,
-        });
+        await this.demandeService
+          .create(
+            {
+              ...data,
+
+              utilisateurId:
+                req.user!.userId,
+            },
+
+            req.user!.role
+          );
 
       return res.status(201).json(
         ApiResponse.success(
@@ -101,15 +124,19 @@ export class DemandeController {
     next: NextFunction
   ) {
     try {
-      const data = updateDemandeSchema.parse(
-        req.body
-      );
+      const data =
+        updateDemandeSchema.parse(
+          req.body
+        );
 
       const demande =
-        await this.demandeService.update(
-          req.params.id,
-          data
-        );
+        await this.demandeService
+          .update(
+            req.params.id,
+            data,
+            req.user!.userId,
+            req.user!.role
+          );
 
       return res.json(
         ApiResponse.success(
@@ -129,19 +156,19 @@ export class DemandeController {
   ) {
     try {
       const data =
-        updateDemandeStatusSchema.parse(
-          req.body
-        );
+        updateDemandeStatusSchema
+          .parse(req.body);
 
       const demande =
-      await this.demandeService.updateStatus(
-        req.params.id,
-        data.statut,
-        
-        req.user!.userId,
-        req.user!.role,
-        data.motifRejet
-      );
+        await this.demandeService
+          .updateStatus(
+            req.params.id,
+            data.statut,
+            req.user!.userId,
+            req.user!.role,
+            data.motifRejet
+          );
+
       return res.json(
         ApiResponse.success(
           "Statut de la demande mis à jour avec succès.",
@@ -159,9 +186,12 @@ export class DemandeController {
     next: NextFunction
   ) {
     try {
-      await this.demandeService.delete(
-        req.params.id
-      );
+      await this.demandeService
+        .delete(
+          req.params.id,
+          req.user!.userId,
+          req.user!.role
+        );
 
       return res.json(
         ApiResponse.success(
@@ -180,9 +210,12 @@ export class DemandeController {
   ) {
     try {
       const historique =
-        await this.demandeService.findHistory(
-          req.params.id
-        );
+        await this.demandeService
+          .findHistory(
+            req.params.id,
+            req.user!.userId,
+            req.user!.role
+          );
 
       return res.json(
         ApiResponse.success(
@@ -194,6 +227,4 @@ export class DemandeController {
       next(error);
     }
   }
-
-
 }

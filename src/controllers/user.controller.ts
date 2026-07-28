@@ -107,7 +107,10 @@ async delete(
   next: NextFunction
 ) {
   try {
-    await this.userService.delete(req.params.id);
+    await this.userService.delete(
+      req.params.id,
+      req.user!.userId
+    );
 
     return res.json(
       ApiResponse.success(

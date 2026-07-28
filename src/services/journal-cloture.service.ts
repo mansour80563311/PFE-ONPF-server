@@ -1,5 +1,14 @@
-import { AppError } from "../errors/AppError";
-import { JournalClotureRepository } from "../repositories/journal-cloture.repository";
+import {
+  Prisma,
+} from "@prisma/client";
+
+import {
+  AppError,
+} from "../errors/AppError";
+
+import {
+  JournalClotureRepository,
+} from "../repositories/journal-cloture.repository";
 
 import type {
   CreateJournalClotureDto,
@@ -7,39 +16,170 @@ import type {
 } from "../validations/journal-cloture.validation";
 
 export class JournalClotureService {
-  private static readonly PREFIX = "JC";
+  private static readonly PREFIX =
+    "JC";
 
   private journalRepository =
     new JournalClotureRepository();
 
-  private getDateRange(dateJour: string) {
-    /*
-     * Journée administrative tunisienne :
-     * UTC+1.
-     */
-    const startDate = new Date(
-      `${dateJour}T00:00:00+01:00`
-    );
+  /**
+   * Protection complémentaire au
+   * roleMiddleware des routes.
+   */
+  private assertCanAccessJournaux(
+    role: string
+  ): void {
+    if (
+      role === "ADMIN" ||
+      role === "RESPONSABLE"
+    ) {
+      return;
+    }
 
-    if (Number.isNaN(startDate.getTime())) {
+    throw new AppError(
+      "Vous n’êtes pas autorisé à accéder aux journaux de clôture.",
+      403
+    );
+  }
+
+  /**
+   * Retourne la date actuelle en Tunisie
+   * au format YYYY-MM-DD.
+   */
+  private getTodayInTunisia():
+    string {
+    const parts =
+      new Intl.DateTimeFormat(
+        "en-US",
+        {
+          timeZone: "Africa/Tunis",
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+        }
+      ).formatToParts(
+        new Date()
+      );
+
+    const year =
+      parts.find(
+        (part) =>
+          part.type === "year"
+      )?.value;
+
+    const month =
+      parts.find(
+        (part) =>
+          part.type === "month"
+      )?.value;
+
+    const day =
+      parts.find(
+        (part) =>
+          part.type === "day"
+      )?.value;
+
+    if (
+      !year ||
+      !month ||
+      !day
+    ) {
+      throw new AppError(
+        "Impossible de déterminer la date actuelle.",
+        500
+      );
+    }
+
+    return `${year}-${month}-${day}`;
+  }
+
+  /**
+   * Vérifie strictement la date puis calcule
+   * les bornes correspondant à la journée
+   * administrative tunisienne UTC+1.
+   */
+  private getDateRange(
+    dateJour: string
+  ) {
+    const match =
+      /^(\d{4})-(\d{2})-(\d{2})$/.exec(
+        dateJour
+      );
+
+    if (!match) {
       throw new AppError(
         "La date de clôture est invalide.",
         400
       );
     }
 
-    const endDate = new Date(
-      startDate.getTime() +
-        24 * 60 * 60 * 1000
-    );
+    const year =
+      Number(match[1]);
+
+    const month =
+      Number(match[2]);
+
+    const day =
+      Number(match[3]);
 
     /*
-     * La colonne dateJour est de type PostgreSQL DATE.
-     * On stocke donc la date à minuit UTC.
+     * La colonne PostgreSQL dateJour est
+     * enregistrée comme une DATE à minuit UTC.
      */
-    const databaseDate = new Date(
-      `${dateJour}T00:00:00.000Z`
-    );
+    const databaseDate =
+      new Date(
+        Date.UTC(
+          year,
+          month - 1,
+          day
+        )
+      );
+
+    /*
+     * Empêche les dates telles que
+     * 2026-02-31 d’être automatiquement
+     * transformées en une date de mars.
+     */
+    const isValidCalendarDate =
+      databaseDate.getUTCFullYear() ===
+        year &&
+      databaseDate.getUTCMonth() ===
+        month - 1 &&
+      databaseDate.getUTCDate() ===
+        day;
+
+    if (!isValidCalendarDate) {
+      throw new AppError(
+        "La date de clôture est invalide.",
+        400
+      );
+    }
+
+    const today =
+      this.getTodayInTunisia();
+
+    if (dateJour > today) {
+      throw new AppError(
+        "Une journée future ne peut pas être clôturée.",
+        400
+      );
+    }
+
+    /*
+     * Minuit en Tunisie correspond à
+     * 23 heures UTC la veille.
+     */
+    const startDate =
+      new Date(
+        databaseDate.getTime() -
+          60 * 60 * 1000
+      );
+
+    const endDate =
+      new Date(
+        startDate.getTime() +
+          24 * 60 * 60 * 1000
+      );
 
     return {
       startDate,
@@ -53,7 +193,9 @@ export class JournalClotureService {
   ): Promise<string> {
     const lastJournal =
       await this.journalRepository
-        .findLastNumeroByYear(year);
+        .findLastNumeroByYear(
+          year
+        );
 
     if (!lastJournal) {
       return `${JournalClotureService.PREFIX}-${year}-000001`;
@@ -62,33 +204,50 @@ export class JournalClotureService {
     const parts =
       lastJournal.numero.split("-");
 
-    const lastNumber = Number(parts[2]);
+    const lastNumber =
+      Number(parts[2]);
 
-    if (Number.isNaN(lastNumber)) {
+    if (
+      Number.isNaN(lastNumber)
+    ) {
       throw new AppError(
         "Le numéro du dernier journal de clôture est invalide.",
         500
       );
     }
 
-    const nextNumber = String(
-      lastNumber + 1
-    ).padStart(6, "0");
+    const nextNumber =
+      String(
+        lastNumber + 1
+      ).padStart(
+        6,
+        "0"
+      );
 
     return `${JournalClotureService.PREFIX}-${year}-${nextNumber}`;
   }
 
-  async preview(dateJour: string) {
+  async preview(
+    dateJour: string,
+    role: string
+  ) {
+    this.assertCanAccessJournaux(
+      role
+    );
+
     const {
       startDate,
       endDate,
       databaseDate,
-    } = this.getDateRange(dateJour);
+    } = this.getDateRange(
+      dateJour
+    );
 
     const existingJournal =
-      await this.journalRepository.findByDate(
-        databaseDate
-      );
+      await this.journalRepository
+        .findByDate(
+          databaseDate
+        );
 
     if (existingJournal) {
       throw new AppError(
@@ -106,18 +265,26 @@ export class JournalClotureService {
 
   async create(
     data: CreateJournalClotureDto,
-    responsableId: string
+    responsableId: string,
+    role: string
   ) {
+    this.assertCanAccessJournaux(
+      role
+    );
+
     const {
       startDate,
       endDate,
       databaseDate,
-    } = this.getDateRange(data.dateJour);
+    } = this.getDateRange(
+      data.dateJour
+    );
 
     const existingJournal =
-      await this.journalRepository.findByDate(
-        databaseDate
-      );
+      await this.journalRepository
+        .findByDate(
+          databaseDate
+        );
 
     if (existingJournal) {
       throw new AppError(
@@ -133,7 +300,9 @@ export class JournalClotureService {
           endDate
         );
 
-    if (demandes.length === 0) {
+    if (
+      demandes.length === 0
+    ) {
       throw new AppError(
         "Aucune demande finalisée n’est disponible pour cette journée.",
         400
@@ -141,66 +310,117 @@ export class JournalClotureService {
     }
 
     const year =
-      databaseDate.getUTCFullYear();
+      databaseDate
+        .getUTCFullYear();
 
     const numero =
-      await this.generateNumero(year);
+      await this.generateNumero(
+        year
+      );
 
-    return this.journalRepository
-      .createWithDemandes({
-        numero,
-        dateJour: databaseDate,
-        responsableId,
-        observations:
-          data.observations?.trim() || null,
-        demandeIds: demandes.map(
-          (demande) => demande.id
-        ),
-      });
+    try {
+      return await this
+        .journalRepository
+        .createWithDemandes({
+          numero,
+          dateJour:
+            databaseDate,
+          responsableId,
+
+          observations:
+            data.observations
+              ?.trim() || null,
+
+          demandeIds:
+            demandes.map(
+              (demande) =>
+                demande.id
+            ),
+        });
+    } catch (error) {
+      /*
+       * Cette erreur peut apparaître lorsque
+       * deux utilisateurs tentent de clôturer
+       * la même journée simultanément ou
+       * génèrent le même numéro.
+       */
+      if (
+        error instanceof
+          Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        throw new AppError(
+          "Cette journée vient déjà d’être clôturée par un autre utilisateur. Actualisez la liste des journaux.",
+          409
+        );
+      }
+
+      throw error;
+    }
   }
 
   async findAll(
-    query: ListJournauxClotureDto
-    ) {
+    query:
+      ListJournauxClotureDto,
+    role: string
+  ) {
+    this.assertCanAccessJournaux(
+      role
+    );
+
     const {
-        page,
-        limit,
-        search,
+      page,
+      limit,
+      search,
     } = query;
 
     const result =
-        await this.journalRepository.findAll(
-        page,
-        limit,
-        search
+      await this.journalRepository
+        .findAll(
+          page,
+          limit,
+          search
         );
 
     return {
-        journaux: result.data,
+      journaux:
+        result.data,
 
-        meta: {
-        total: result.total,
-        page: result.page,
-        limit: result.limit,
+      meta: {
+        total:
+          result.total,
+
+        page:
+          result.page,
+
+        limit:
+          result.limit,
+
         totalPages:
-            result.totalPages,
-        },
+          result.totalPages,
+      },
     };
-    }
+  }
 
-    async findById(id: string) {
+  async findById(
+    id: string,
+    role: string
+  ) {
+    this.assertCanAccessJournaux(
+      role
+    );
+
     const journal =
-        await this.journalRepository.findById(
-        id
-        );
+      await this.journalRepository
+        .findById(id);
 
     if (!journal) {
-        throw new AppError(
+      throw new AppError(
         "Journal de clôture introuvable.",
         404
-        );
+      );
     }
 
     return journal;
-    }
+  }
 }

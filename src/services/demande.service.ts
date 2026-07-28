@@ -3,161 +3,419 @@ import {
   StatutDocument,
   TypeDocument,
 } from "@prisma/client";
-import { DemandeRepository } from "../repositories/demande.repository";
-import {
-  CreateDemandeServiceDto,
-  UpdateDemandeDto,
-  ListDemandesDto,
-} from "../validations/demande.validation";
-import { UserRepository } from "../repositories/user.repository";
+
+import type {
+  Prisma,
+} from "@prisma/client";
+
 import { AppError } from "../errors/AppError";
+
 import {
   DemandeDocumentRepository,
 } from "../repositories/demande-document.repository";
 
-export class DemandeService {
-    private static readonly PREFIX = "DF";
-    private demandeRepository = new DemandeRepository();
-    private userRepository = new UserRepository();
-    private documentRepository =
-      new DemandeDocumentRepository();
-    // Méthode privée pour générer un numéro unique pour chaque demande
-    private async generateNumero(): Promise<string> {
-    const lastDemande =
-        await this.demandeRepository.findLastNumero();
+import {
+  DemandeRepository,
+} from "../repositories/demande.repository";
 
-    const year = new Date().getFullYear();
+import {
+  UserRepository,
+} from "../repositories/user.repository";
+
+import type {
+  CreateDemandeServiceDto,
+  ListDemandesDto,
+  UpdateDemandeDto,
+} from "../validations/demande.validation";
+
+interface DemandeAccessData {
+  utilisateurId: string;
+  statut: StatutDemande;
+}
+
+export class DemandeService {
+  private static readonly PREFIX =
+    "DF";
+
+  private demandeRepository =
+    new DemandeRepository();
+
+  private userRepository =
+    new UserRepository();
+
+  private documentRepository =
+    new DemandeDocumentRepository();
+
+  /**
+   * Filtre appliqué à la liste des demandes.
+   */
+  private buildListAccessFilter(
+    utilisateurId: string,
+    role: string
+  ): Prisma.DemandeWhereInput {
+    if (role === "ADMIN") {
+      return {};
+    }
+
+    if (role === "AGENT") {
+      return {
+        utilisateurId,
+      };
+    }
+
+    if (role === "RESPONSABLE") {
+      return {
+        statut:
+          StatutDemande.EN_COURS,
+      };
+    }
+
+    throw new AppError(
+      "Rôle utilisateur non autorisé.",
+      403
+    );
+  }
+
+  /**
+   * Vérifie l’accès à une demande précise.
+   *
+   * Le Responsable ne peut jamais accéder
+   * aux demandes EN_ATTENTE.
+   *
+   * Les demandes finalisées restent
+   * consultables depuis les journaux.
+   */
+  private assertCanReadDemande(
+    demande: DemandeAccessData,
+    utilisateurId: string,
+    role: string
+  ): void {
+    if (role === "ADMIN") {
+      return;
+    }
+
+    if (
+      role === "AGENT" &&
+      demande.utilisateurId ===
+        utilisateurId
+    ) {
+      return;
+    }
+
+    if (
+      role === "RESPONSABLE" &&
+      demande.statut !==
+        StatutDemande.EN_ATTENTE
+    ) {
+      return;
+    }
+
+    throw new AppError(
+      "Vous n’êtes pas autorisé à accéder à cette demande.",
+      403
+    );
+  }
+
+  private async generateNumero():
+    Promise<string> {
+    const lastDemande =
+      await this.demandeRepository
+        .findLastNumero();
+
+    const year =
+      new Date().getFullYear();
 
     if (!lastDemande) {
-        return `${DemandeService.PREFIX}-${year}-000001`;
+      return `${DemandeService.PREFIX}-${year}-000001`;
     }
 
-    const parts = lastDemande.numero.split("-");
+    const parts =
+      lastDemande.numero.split("-");
 
-    const lastNumber = Number(parts[2]);
+    const lastNumber =
+      Number(parts[2]);
 
-    if (Number.isNaN(lastNumber)) {
-    throw new AppError(
+    if (
+      Number.isNaN(lastNumber)
+    ) {
+      throw new AppError(
         "Le numéro de demande est invalide.",
         500
-    );
+      );
     }
 
-    const nextNumber = String(lastNumber + 1).padStart(6, "0");
+    const nextNumber = String(
+      lastNumber + 1
+    ).padStart(6, "0");
 
     return `${DemandeService.PREFIX}-${year}-${nextNumber}`;
+  }
+
+  async create(
+    data: CreateDemandeServiceDto,
+    role: string
+  ) {
+    if (
+      role !== "ADMIN" &&
+      role !== "AGENT"
+    ) {
+      throw new AppError(
+        "Seul un agent peut créer une demande.",
+        403
+      );
     }
-  async create(data: CreateDemandeServiceDto) {
+
     const utilisateur =
-      await this.userRepository.findById(data.utilisateurId);
+      await this.userRepository
+        .findById(
+          data.utilisateurId
+        );
 
     if (!utilisateur) {
-      throw new AppError("Utilisateur introuvable.", 404);
+      throw new AppError(
+        "Utilisateur introuvable.",
+        404
+      );
     }
 
     const existing =
-        await this.demandeRepository.findByCinAndReference(
-            data.cin,
-            data.referenceFonciere
+      await this.demandeRepository
+        .findByCinAndReference(
+          data.cin,
+          data.referenceFonciere
         );
 
-        if (existing) {
-        throw new AppError(
+    if (existing) {
+      throw new AppError(
         "Une demande existe déjà pour ce demandeur et cette référence foncière.",
         409
-        );
-        }
+      );
+    }
 
-    const numero = await this.generateNumero();
+    const numero =
+      await this.generateNumero();
 
-    return this.demandeRepository.create({
-      numero,
-      nomDemandeur: data.nomDemandeur,
-      prenomDemandeur: data.prenomDemandeur,
-      cin: data.cin,
-      telephone: data.telephone,
-      email: data.email || null,
-      referenceFonciere: data.referenceFonciere,
-      adresseBien: data.adresseBien,
-      observations: data.observations || null,
-      statut: StatutDemande.EN_ATTENTE,
-      utilisateur: {
-        connect: {
-          id: data.utilisateurId,
+    return this.demandeRepository
+      .create({
+        numero,
+
+        nomDemandeur:
+          data.nomDemandeur,
+
+        prenomDemandeur:
+          data.prenomDemandeur,
+
+        cin:
+          data.cin,
+
+        telephone:
+          data.telephone,
+
+        email:
+          data.email || null,
+
+        referenceFonciere:
+          data.referenceFonciere,
+
+        adresseBien:
+          data.adresseBien,
+
+        observations:
+          data.observations || null,
+
+        statut:
+          StatutDemande.EN_ATTENTE,
+
+        utilisateur: {
+          connect: {
+            id:
+              data.utilisateurId,
+          },
         },
-      },
-    });
+      });
   }
 
-  async findAll(query: ListDemandesDto) {
-    const { page, limit, search } = query;
+  async findAll(
+    query: ListDemandesDto,
+    utilisateurId: string,
+    role: string
+  ) {
+    const {
+      page,
+      limit,
+      search,
+    } = query;
 
-    const result = await this.demandeRepository.findAll(
-        page,
-        limit,
-        search
-    );
+    const accessFilter =
+      this.buildListAccessFilter(
+        utilisateurId,
+        role
+      );
+
+    const result =
+      await this.demandeRepository
+        .findAll(
+          page,
+          limit,
+          search,
+          accessFilter
+        );
 
     return {
-        demandes: result.data,
-        meta: {
-        total: result.total,
-        page: result.page,
-        limit: result.limit,
-        totalPages: result.totalPages,
-        },
-    };
-    }
+      demandes:
+        result.data,
 
-  async findById(id: string) {
-    const demande = await this.demandeRepository.findById(id);
+      meta: {
+        total:
+          result.total,
+
+        page:
+          result.page,
+
+        limit:
+          result.limit,
+
+        totalPages:
+          result.totalPages,
+      },
+    };
+  }
+
+  async findById(
+    id: string,
+    utilisateurId: string,
+    role: string
+  ) {
+    const demande =
+      await this.demandeRepository
+        .findById(id);
 
     if (!demande) {
-      throw new AppError("Demande introuvable.", 404);
+      throw new AppError(
+        "Demande introuvable.",
+        404
+      );
     }
+
+    this.assertCanReadDemande(
+      demande,
+      utilisateurId,
+      role
+    );
 
     return demande;
   }
 
-  async update(id: string, data: UpdateDemandeDto) {
-    const demande = await this.findById(id);
+  async update(
+    id: string,
+    data: UpdateDemandeDto,
+    utilisateurId: string,
+    role: string
+  ) {
+    const demande =
+      await this.findById(
+        id,
+        utilisateurId,
+        role
+      );
+
+    const isAdmin =
+      role === "ADMIN";
+
+    const isAgent =
+      role === "AGENT";
 
     if (
-        demande.statut === StatutDemande.VALIDEE ||
-        demande.statut === StatutDemande.REJETEE
-      ) {
+      !isAdmin &&
+      !isAgent
+    ) {
+      throw new AppError(
+        "Seul un agent peut modifier une demande.",
+        403
+      );
+    }
+
+    if (
+      demande.statut ===
+        StatutDemande.VALIDEE ||
+      demande.statut ===
+        StatutDemande.REJETEE
+    ) {
       throw new AppError(
         "Une demande terminée ne peut plus être modifiée.",
         400
       );
     }
 
-    return this.demandeRepository.update(id, {
-      ...(data.nomDemandeur !== undefined  && {
-        nomDemandeur: data.nomDemandeur,
-      }),
-      ...(data.prenomDemandeur !== undefined && {
-        prenomDemandeur: data.prenomDemandeur,
-      }),
-      ...(data.cin !== undefined && {
-        cin: data.cin,
-      }),
-      ...(data.telephone !== undefined && {
-        telephone: data.telephone,
-      }),
-      ...(data.referenceFonciere !== undefined && {
-        referenceFonciere: data.referenceFonciere,
-      }),
-      ...(data.adresseBien !== undefined && {
-        adresseBien: data.adresseBien,
-      }),
-      ...(data.email !== undefined && {
-        email: data.email || null,
-      }),
-      ...(data.observations !== undefined && {
-        observations: data.observations || null,
-      }),
-    });
+    /*
+     * Un Agent ne peut modifier sa demande
+     * que lorsqu’elle est encore EN_ATTENTE.
+     *
+     * L’Administrateur conserve son droit de
+     * correction sur une demande EN_COURS.
+     */
+    if (
+      isAgent &&
+      demande.statut !==
+        StatutDemande.EN_ATTENTE
+    ) {
+      throw new AppError(
+        "Une demande transmise ne peut plus être modifiée par l’agent.",
+        400
+      );
+    }
+
+    return this.demandeRepository
+      .update(id, {
+        ...(data.nomDemandeur !==
+          undefined && {
+          nomDemandeur:
+            data.nomDemandeur,
+        }),
+
+        ...(data.prenomDemandeur !==
+          undefined && {
+          prenomDemandeur:
+            data.prenomDemandeur,
+        }),
+
+        ...(data.cin !==
+          undefined && {
+          cin:
+            data.cin,
+        }),
+
+        ...(data.telephone !==
+          undefined && {
+          telephone:
+            data.telephone,
+        }),
+
+        ...(data.referenceFonciere !==
+          undefined && {
+          referenceFonciere:
+            data.referenceFonciere,
+        }),
+
+        ...(data.adresseBien !==
+          undefined && {
+          adresseBien:
+            data.adresseBien,
+        }),
+
+        ...(data.email !==
+          undefined && {
+          email:
+            data.email || null,
+        }),
+
+        ...(data.observations !==
+          undefined && {
+          observations:
+            data.observations ||
+            null,
+        }),
+      });
   }
 
   private async verifyDocumentsBeforeValidation(
@@ -165,27 +423,38 @@ export class DemandeService {
   ): Promise<void> {
     const documents =
       await this.documentRepository
-        .findForValidation(demandeId);
+        .findForValidation(
+          demandeId
+        );
 
-    const identityDocument = documents.find(
-      (document) =>
-        document.type === TypeDocument.CIN ||
-        document.type === TypeDocument.PASSEPORT
-    );
+    const identityDocument =
+      documents.find(
+        (document) =>
+          document.type ===
+            TypeDocument.CIN ||
+          document.type ===
+            TypeDocument.PASSEPORT
+      );
 
-    const contrat = documents.find(
-      (document) =>
-        document.type === TypeDocument.CONTRAT
-    );
+    const contrat =
+      documents.find(
+        (document) =>
+          document.type ===
+          TypeDocument.CONTRAT
+      );
 
-    const procuration = documents.find(
-      (document) =>
-        document.type ===
-        TypeDocument.PROCURATION
-    );
+    const procuration =
+      documents.find(
+        (document) =>
+          document.type ===
+          TypeDocument.PROCURATION
+      );
 
-    const piecesManquantes: string[] = [];
-    const piecesNonConformes: string[] = [];
+    const piecesManquantes:
+      string[] = [];
+
+    const piecesNonConformes:
+      string[] = [];
 
     if (!identityDocument) {
       piecesManquantes.push(
@@ -201,29 +470,41 @@ export class DemandeService {
     }
 
     if (!contrat) {
-      piecesManquantes.push("contrat");
+      piecesManquantes.push(
+        "contrat"
+      );
     } else if (
-      contrat.statut !== StatutDocument.CONFORME
+      contrat.statut !==
+      StatutDocument.CONFORME
     ) {
-      piecesNonConformes.push("contrat");
+      piecesNonConformes.push(
+        "contrat"
+      );
     }
 
     if (!procuration) {
-      piecesManquantes.push("procuration");
+      piecesManquantes.push(
+        "procuration"
+      );
     } else if (
       procuration.statut !==
       StatutDocument.CONFORME
     ) {
-      piecesNonConformes.push("procuration");
+      piecesNonConformes.push(
+        "procuration"
+      );
     }
 
     if (
       piecesManquantes.length > 0 ||
       piecesNonConformes.length > 0
     ) {
-      const details: string[] = [];
+      const details: string[] =
+        [];
 
-      if (piecesManquantes.length > 0) {
+      if (
+        piecesManquantes.length > 0
+      ) {
         details.push(
           `Pièces manquantes : ${piecesManquantes.join(
             ", "
@@ -231,7 +512,10 @@ export class DemandeService {
         );
       }
 
-      if (piecesNonConformes.length > 0) {
+      if (
+        piecesNonConformes.length >
+        0
+      ) {
         details.push(
           `Pièces non conformes ou non vérifiées : ${piecesNonConformes.join(
             ", "
@@ -255,22 +539,22 @@ export class DemandeService {
     role: string,
     motifRejet?: string
   ) {
-    const demande = await this.findById(id);
+    const demande =
+      await this.findById(
+        id,
+        utilisateurId,
+        role
+      );
 
-    /*
-    * Vérification des autorisations
-    * selon le rôle de l’utilisateur connecté.
-    */
+    const isAdmin =
+      role === "ADMIN";
 
-    const isAdmin = role === "ADMIN";
-    const isAgent = role === "AGENT";
+    const isAgent =
+      role === "AGENT";
+
     const isResponsable =
       role === "RESPONSABLE";
 
-    /*
-    * Seuls l’Administrateur et l’Agent
-    * peuvent transmettre une demande.
-    */
     if (
       nouveauStatut ===
         StatutDemande.EN_COURS &&
@@ -283,10 +567,6 @@ export class DemandeService {
       );
     }
 
-    /*
-    * Seuls l’Administrateur et le Responsable
-    * peuvent valider ou rejeter une demande.
-    */
     if (
       (
         nouveauStatut ===
@@ -303,10 +583,6 @@ export class DemandeService {
       );
     }
 
-    /*
-    * Un Agent ne peut transmettre
-    * que les demandes qu’il a créées.
-    */
     if (
       isAgent &&
       nouveauStatut ===
@@ -320,32 +596,35 @@ export class DemandeService {
       );
     }
 
-    /*
-    * Vérification de la transition métier.
-    */
+    const transitionsAutorisees:
+      Record<
+        StatutDemande,
+        StatutDemande[]
+      > = {
+        [StatutDemande.EN_ATTENTE]:
+          [
+            StatutDemande.EN_COURS,
+          ],
 
-    const transitionsAutorisees: Record<
-      StatutDemande,
-      StatutDemande[]
-    > = {
-      [StatutDemande.EN_ATTENTE]: [
-        StatutDemande.EN_COURS,
-      ],
+        [StatutDemande.EN_COURS]:
+          [
+            StatutDemande.VALIDEE,
+            StatutDemande.REJETEE,
+          ],
 
-      [StatutDemande.EN_COURS]: [
-        StatutDemande.VALIDEE,
-        StatutDemande.REJETEE,
-      ],
+        [StatutDemande.VALIDEE]:
+          [],
 
-      [StatutDemande.VALIDEE]: [],
-
-      [StatutDemande.REJETEE]: [],
-    };
+        [StatutDemande.REJETEE]:
+          [],
+      };
 
     const transitionAutorisee =
       transitionsAutorisees[
         demande.statut
-      ].includes(nouveauStatut);
+      ].includes(
+        nouveauStatut
+      );
 
     if (!transitionAutorisee) {
       throw new AppError(
@@ -353,10 +632,6 @@ export class DemandeService {
         400
       );
     }
-
-    /*
-    * Le motif est obligatoire en cas de rejet.
-    */
 
     if (
       nouveauStatut ===
@@ -369,23 +644,15 @@ export class DemandeService {
       );
     }
 
-    /*
-    * Vérification des pièces avant validation.
-    */
-
     if (
       nouveauStatut ===
       StatutDemande.VALIDEE
     ) {
-      await this.verifyDocumentsBeforeValidation(
-        id
-      );
+      await this
+        .verifyDocumentsBeforeValidation(
+          id
+        );
     }
-
-    /*
-    * Mise à jour du statut et création
-    * de l’historique dans la transaction.
-    */
 
     return this.demandeRepository
       .updateStatusWithHistory({
@@ -405,13 +672,40 @@ export class DemandeService {
             : null,
       });
   }
-  
-  async delete(id: string) {
-    const demande = await this.findById(id);
+
+  async delete(
+    id: string,
+    utilisateurId: string,
+    role: string
+  ) {
+    const demande =
+      await this.findById(
+        id,
+        utilisateurId,
+        role
+      );
+
+    const isAdmin =
+      role === "ADMIN";
+
+    const isAgent =
+      role === "AGENT";
 
     if (
-      demande.statut === StatutDemande.VALIDEE ||
-      demande.statut === StatutDemande.REJETEE
+      !isAdmin &&
+      !isAgent
+    ) {
+      throw new AppError(
+        "Seul un agent peut supprimer une demande.",
+        403
+      );
+    }
+
+    if (
+      demande.statut ===
+        StatutDemande.VALIDEE ||
+      demande.statut ===
+        StatutDemande.REJETEE
     ) {
       throw new AppError(
         "Une demande terminée ne peut plus être supprimée.",
@@ -419,14 +713,33 @@ export class DemandeService {
       );
     }
 
-    return this.demandeRepository.delete(id);
+    if (
+      isAgent &&
+      demande.statut !==
+        StatutDemande.EN_ATTENTE
+    ) {
+      throw new AppError(
+        "Une demande transmise ne peut plus être supprimée par l’agent.",
+        400
+      );
+    }
+
+    return this.demandeRepository
+      .delete(id);
   }
-  
-   async findHistory(id: string) {
-    await this.findById(id);
+
+  async findHistory(
+    id: string,
+    utilisateurId: string,
+    role: string
+  ) {
+    await this.findById(
+      id,
+      utilisateurId,
+      role
+    );
 
     return this.demandeRepository
       .findHistoryByDemandeId(id);
   }
 }
-

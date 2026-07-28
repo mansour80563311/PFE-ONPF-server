@@ -1,128 +1,294 @@
-/* 
-Pourquoi faire autant de méthodes ?
+import {
+  Prisma,
+} from "@prisma/client";
 
-Parce que dans le UserService, nous ne voulons jamais écrire 
-directement du Prisma.
-
-  */
 import prisma from "../config/prisma";
-import { Prisma } from "@prisma/client";
+
+/*
+ * Sélection publique utilisée dans les
+ * réponses de l’API.
+ *
+ * Le champ password est volontairement
+ * absent.
+ */
+const utilisateurPublicSelect = {
+  id: true,
+  nom: true,
+  prenom: true,
+  email: true,
+  telephone: true,
+  login: true,
+  statut: true,
+  roleId: true,
+  createdAt: true,
+  updatedAt: true,
+
+  role: {
+    select: {
+      id: true,
+      nom: true,
+      description: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  },
+} satisfies Prisma.UtilisateurSelect;
 
 export class UserRepository {
-// methde privée
-private buildSearchFilter(search?: string): Prisma.UtilisateurWhereInput {
+  /*
+   * Construction du filtre de recherche.
+   *
+   * Une recherche constituée uniquement
+   * d’espaces est considérée comme vide.
+   */
+  private buildSearchFilter(
+    search?: string
+  ): Prisma.UtilisateurWhereInput {
+    const normalizedSearch =
+      search?.trim();
 
-    if (!search) return {};
+    if (!normalizedSearch) {
+      return {};
+    }
 
     return {
+      OR: [
+        {
+          nom: {
+            contains:
+              normalizedSearch,
 
-        OR: [
+            mode: "insensitive",
+          },
+        },
 
-            {
-                nom: {
-                    contains: search,
-                    mode: "insensitive"
-                }
-            },
+        {
+          prenom: {
+            contains:
+              normalizedSearch,
 
-            {
-                prenom: {
-                    contains: search,
-                    mode: "insensitive"
-                }
-            },
+            mode: "insensitive",
+          },
+        },
 
-            {
-                login: {
-                    contains: search,
-                    mode: "insensitive"
-                }
-            },
+        {
+          login: {
+            contains:
+              normalizedSearch,
 
-            {
-                email: {
-                    contains: search,
-                    mode: "insensitive"
-                }
-            }
+            mode: "insensitive",
+          },
+        },
 
-        ]
+        {
+          email: {
+            contains:
+              normalizedSearch,
 
+            mode: "insensitive",
+          },
+        },
+      ],
     };
+  }
 
-}   
-
-    // Méthode pour récupérer tous les utilisateurs avec pagination et recherche
-  async findAll(skip: number, take: number, search?: string) {
+  /*
+   * Récupérer les utilisateurs avec
+   * pagination et recherche.
+   */
+  async findAll(
+    skip: number,
+    take: number,
+    search?: string
+  ) {
     return prisma.utilisateur.findMany({
-      where: this.buildSearchFilter(search),
-  
-      include: {
-        role: true,
-      },
+      where:
+        this.buildSearchFilter(
+          search
+        ),
+
       skip,
       take,
+
       orderBy: {
         nom: "asc",
       },
+
+      select:
+        utilisateurPublicSelect,
     });
   }
-// Méthode pour compter le nombre total d'utilisateurs avec recherche
-async count(search?: string) {
-  return prisma.utilisateur.count({
-    where: this.buildSearchFilter(search),
-  });
-}
-// Méthode pour récupérer un utilisateur par son ID
-  async findById(id: string) {
+
+  /*
+   * Compter les utilisateurs selon le
+   * même filtre de recherche.
+   */
+  async count(
+    search?: string
+  ) {
+    return prisma.utilisateur.count({
+      where:
+        this.buildSearchFilter(
+          search
+        ),
+    });
+  }
+
+  /*
+   * Récupérer un utilisateur par son ID.
+   *
+   * Le mot de passe n’est jamais retourné.
+   */
+  async findById(
+    id: string
+  ) {
     return prisma.utilisateur.findUnique({
       where: {
         id,
       },
-      include: {
-        role: true,
-      },
+
+      select:
+        utilisateurPublicSelect,
     });
   }
-// Méthode pour récupérer un utilisateur par son login
-  async findByLogin(login: string) {
+
+  /*
+   * Récupérer un utilisateur par son login.
+   *
+   * Cette méthode est utilisée par
+   * l’authentification. Elle doit donc
+   * récupérer le hash du mot de passe pour
+   * permettre la comparaison avec bcrypt.
+   *
+   * Elle ne doit pas être utilisée
+   * directement dans une réponse HTTP.
+   */
+  async findByLogin(
+    login: string
+  ) {
     return prisma.utilisateur.findUnique({
       where: {
         login,
       },
-      include: {
-        role: true,
+
+      select: {
+        id: true,
+        nom: true,
+        prenom: true,
+        email: true,
+        telephone: true,
+        login: true,
+        password: true,
+        statut: true,
+        roleId: true,
+        createdAt: true,
+        updatedAt: true,
+
+        role: {
+          select: {
+            id: true,
+            nom: true,
+            description: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        },
       },
     });
   }
-// Méthode pour récupérer un utilisateur par son email
-  async findByEmail(email: string) {
+
+  /*
+   * Vérifier si un email existe.
+   */
+  async findByEmail(
+    email: string
+  ) {
     return prisma.utilisateur.findUnique({
       where: {
         email,
       },
+
+      select: {
+        id: true,
+        email: true,
+      },
     });
   }
-// Méthode pour créer un nouvel utilisateur
-    async create(data: Prisma.UtilisateurCreateInput) {
-        return prisma.utilisateur.create({
-        data
-    });
-}
-// Méthode pour mettre à jour un utilisateur existant
-  async update(id: string, data: Prisma.UtilisateurUpdateInput) {
-    return prisma.utilisateur.update({
-        where: {
+
+    /*
+  * Vérifier l’existence d’un rôle.
+  */
+  async findRoleById(
+    id: string
+  ) {
+    return prisma.role.findUnique({
+      where: {
         id,
       },
-      data,
+
+      select: {
+        id: true,
+        nom: true,
+      },
     });
   }
-// Méthode pour supprimer un utilisateur
-  async delete(id: string) {
+
+  /*
+   * Créer un utilisateur.
+   *
+   * Le mot de passe est stocké en base,
+   * mais n’est pas renvoyé dans la réponse.
+   */
+  async create(
+    data:
+      Prisma.UtilisateurCreateInput
+  ) {
+    return prisma.utilisateur.create({
+      data,
+
+      select:
+        utilisateurPublicSelect,
+    });
+  }
+
+  /*
+   * Mettre à jour un utilisateur.
+   *
+   * Le mot de passe n’est pas renvoyé.
+   */
+  async update(
+    id: string,
+    data:
+      Prisma.UtilisateurUpdateInput
+  ) {
+    return prisma.utilisateur.update({
+      where: {
+        id,
+      },
+
+      data,
+
+      select:
+        utilisateurPublicSelect,
+    });
+  }
+
+  /*
+   * Supprimer un utilisateur.
+   */
+  async delete(
+    id: string
+  ) {
     return prisma.utilisateur.delete({
       where: {
         id,
+      },
+
+      select: {
+        id: true,
+        nom: true,
+        prenom: true,
+        login: true,
       },
     });
   }

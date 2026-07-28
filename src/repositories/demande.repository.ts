@@ -1,98 +1,165 @@
-import prisma from "../config/prisma";
-import { 
+import {
   Prisma,
   StatutDemande,
-
 } from "@prisma/client";
 
+import prisma from "../config/prisma";
+
+/*
+ * Sélection publique d’un utilisateur.
+ *
+ * Le champ password est volontairement exclu
+ * afin que le hash du mot de passe ne soit
+ * jamais retourné dans les réponses de l’API.
+ */
+const utilisateurPublicSelect = {
+  id: true,
+  nom: true,
+  prenom: true,
+  email: true,
+  telephone: true,
+  login: true,
+  statut: true,
+  roleId: true,
+  createdAt: true,
+  updatedAt: true,
+
+  role: {
+    select: {
+      id: true,
+      nom: true,
+      description: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  },
+} satisfies Prisma.UtilisateurSelect;
+
 export class DemandeRepository {
-private buildSearchFilter(
-  search?: string
-): Prisma.DemandeWhereInput {
+  private buildSearchFilter(
+    search?: string
+  ): Prisma.DemandeWhereInput {
+    const normalizedSearch =
+      search?.trim();
 
-  if (!search) return {};
+    if (!normalizedSearch) {
+      return {};
+    }
 
-  return {
-    OR: [
-      {
-        numero: {
-          contains: search,
-          mode: "insensitive",
-        },
-      },
-      {
-        nomDemandeur: {
-          contains: search,
-          mode: "insensitive",
-        },
-      },
-      {
-        prenomDemandeur: {
-          contains: search,
-          mode: "insensitive",
-        },
-      },
-      {
-        cin: {
-          contains: search,
-          mode: "insensitive",
-        },
-      },
-      {
-        referenceFonciere: {
-          contains: search,
-          mode: "insensitive",
-        },
-      },
-      {
-        adresseBien: {
-            contains: search,
+    return {
+      OR: [
+        {
+          numero: {
+            contains: normalizedSearch,
             mode: "insensitive",
+          },
         },
-      },
-    ],
-  };
-}
 
+        {
+          nomDemandeur: {
+            contains: normalizedSearch,
+            mode: "insensitive",
+          },
+        },
 
-  async create(data: Prisma.DemandeCreateInput) {
+        {
+          prenomDemandeur: {
+            contains: normalizedSearch,
+            mode: "insensitive",
+          },
+        },
+
+        {
+          cin: {
+            contains: normalizedSearch,
+            mode: "insensitive",
+          },
+        },
+
+        {
+          referenceFonciere: {
+            contains: normalizedSearch,
+            mode: "insensitive",
+          },
+        },
+
+        {
+          adresseBien: {
+            contains: normalizedSearch,
+            mode: "insensitive",
+          },
+        },
+      ],
+    };
+  }
+
+  async create(
+    data: Prisma.DemandeCreateInput
+  ) {
     return prisma.demande.create({
       data,
+
       include: {
         utilisateur: {
-          include: {
-            role: true,
-          },
+          select:
+            utilisateurPublicSelect,
         },
       },
     });
   }
-  // Méthode pour récupérer toutes les demandes avec pagination et recherche
+
   async findAll(
     page: number,
     limit: number,
-    search?: string
+    search?: string,
+    accessFilter:
+      Prisma.DemandeWhereInput = {}
   ) {
-    const skip = (page - 1) * limit;
-    const where = this.buildSearchFilter(search);
+    const skip =
+      (page - 1) * limit;
 
-    const [data, total] = await Promise.all([
+    const searchFilter =
+      this.buildSearchFilter(
+        search
+      );
+
+    /*
+     * Le filtre de recherche et le filtre
+     * d’autorisation sont appliqués
+     * simultanément.
+     */
+    const where:
+      Prisma.DemandeWhereInput = {
+        AND: [
+          accessFilter,
+          searchFilter,
+        ],
+      };
+
+    const [
+      data,
+      total,
+    ] = await Promise.all([
       prisma.demande.findMany({
         where,
         skip,
         take: limit,
+
         orderBy: {
           createdAt: "desc",
         },
+
         include: {
           utilisateur: {
-            include: {
-              role: true,
-            },
+            select:
+              utilisateurPublicSelect,
           },
         },
       }),
-      prisma.demande.count({ where }),
+
+      prisma.demande.count({
+        where,
+      }),
     ]);
 
     return {
@@ -100,21 +167,28 @@ private buildSearchFilter(
       total,
       page,
       limit,
-      totalPages: Math.ceil(total / limit),
+
+      totalPages:
+        Math.ceil(
+          total / limit
+        ),
     };
   }
 
-  async findById(id: string) {
+  async findById(
+    id: string
+  ) {
     return prisma.demande.findUnique({
       where: {
         id,
       },
+
       include: {
         utilisateur: {
-          include: {
-            role: true,
-          },
+          select:
+            utilisateurPublicSelect,
         },
+
         journalCloture: {
           include: {
             responsable: {
@@ -136,41 +210,49 @@ private buildSearchFilter(
     data: Prisma.DemandeUpdateInput
   ) {
     return prisma.demande.update({
-      where: { id },
+      where: {
+        id,
+      },
+
       data,
+
       include: {
         utilisateur: {
-          include: {
-            role: true,
-          },
+          select:
+            utilisateurPublicSelect,
         },
       },
     });
   }
 
-  async updateStatusWithHistory(params: {
+  async updateStatusWithHistory(
+    params: {
       id: string;
       ancienStatut: StatutDemande;
       nouveauStatut: StatutDemande;
       motifRejet?: string | null;
       utilisateurId: string;
-    }) {
-      const {
-        id,
-        ancienStatut,
-        nouveauStatut,
-        motifRejet,
-        utilisateurId,
-      } = params;
+    }
+  ) {
+    const {
+      id,
+      ancienStatut,
+      nouveauStatut,
+      motifRejet,
+      utilisateurId,
+    } = params;
 
-      return prisma.$transaction(async (tx) => {
+    return prisma.$transaction(
+      async (tx) => {
         const demande =
           await tx.demande.update({
             where: {
               id,
             },
+
             data: {
-              statut: nouveauStatut,
+              statut:
+                nouveauStatut,
 
               motifRejet:
                 nouveauStatut ===
@@ -178,45 +260,50 @@ private buildSearchFilter(
                   ? motifRejet ?? null
                   : null,
             },
+
             include: {
               utilisateur: {
-                include: {
-                  role: true,
+                select:
+                  utilisateurPublicSelect,
+              },
+            },
+          });
+
+        await tx
+          .historiqueStatutDemande
+          .create({
+            data: {
+              ancienStatut,
+              nouveauStatut,
+
+              motif:
+                nouveauStatut ===
+                StatutDemande.REJETEE
+                  ? motifRejet ?? null
+                  : null,
+
+              demande: {
+                connect: {
+                  id,
+                },
+              },
+
+              utilisateur: {
+                connect: {
+                  id: utilisateurId,
                 },
               },
             },
           });
 
-        await tx.historiqueStatutDemande.create({
-          data: {
-            ancienStatut,
-            nouveauStatut,
-
-            motif:
-              nouveauStatut ===
-              StatutDemande.REJETEE
-                ? motifRejet ?? null
-                : null,
-
-            demande: {
-              connect: {
-                id,
-              },
-            },
-
-            utilisateur: {
-              connect: {
-                id: utilisateurId,
-              },
-            },
-          },
-        });
-
         return demande;
-      });
+      }
+    );
   }
 
-  async delete(id: string) {
+  async delete(
+    id: string
+  ) {
     return prisma.demande.delete({
       where: {
         id,
@@ -224,11 +311,12 @@ private buildSearchFilter(
     });
   }
 
-    async findLastNumero() {
+  async findLastNumero() {
     return prisma.demande.findFirst({
       orderBy: {
         createdAt: "desc",
       },
+
       select: {
         numero: true,
       },
@@ -236,15 +324,19 @@ private buildSearchFilter(
   }
 
   async findHistoryByDemandeId(
-      demandeId: string
-    ) {
-      return prisma.historiqueStatutDemande.findMany({
+    demandeId: string
+  ) {
+    return prisma
+      .historiqueStatutDemande
+      .findMany({
         where: {
           demandeId,
         },
+
         orderBy: {
           createdAt: "asc",
         },
+
         include: {
           utilisateur: {
             select: {
@@ -256,9 +348,8 @@ private buildSearchFilter(
           },
         },
       });
-    }
+  }
 
-  // Méthode pour trouver une demande par CIN et référence foncière
   async findByCinAndReference(
     cin: string,
     referenceFonciere: string
@@ -271,9 +362,3 @@ private buildSearchFilter(
     });
   }
 }
-
-
-
- 
-
-

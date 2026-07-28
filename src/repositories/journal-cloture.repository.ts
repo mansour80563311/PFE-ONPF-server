@@ -1,6 +1,6 @@
 import {
-    Prisma,
-    StatutDemande,
+  Prisma,
+  StatutDemande,
 } from "@prisma/client";
 
 import prisma from "../config/prisma";
@@ -14,7 +14,9 @@ interface CreateJournalParams {
 }
 
 export class JournalClotureRepository {
-  async findByDate(dateJour: Date) {
+  async findByDate(
+    dateJour: Date
+  ) {
     return prisma.journalCloture.findUnique({
       where: {
         dateJour,
@@ -31,9 +33,11 @@ export class JournalClotureRepository {
           startsWith: `JC-${year}-`,
         },
       },
+
       orderBy: {
         numero: "desc",
       },
+
       select: {
         numero: true,
       },
@@ -96,190 +100,217 @@ export class JournalClotureRepository {
     observations,
     demandeIds,
   }: CreateJournalParams) {
-    return prisma.$transaction(async (tx) => {
-      const journal =
-        await tx.journalCloture.create({
-          data: {
-            numero,
-            dateJour,
-            observations:
-              observations || null,
+    return prisma.$transaction(
+      async (tx) => {
+        const journal =
+          await tx.journalCloture.create({
+            data: {
+              numero,
+              dateJour,
 
-            responsable: {
-              connect: {
-                id: responsableId,
+              observations:
+                observations || null,
+
+              responsable: {
+                connect: {
+                  id: responsableId,
+                },
+              },
+
+              demandes: {
+                connect: demandeIds.map(
+                  (id) => ({
+                    id,
+                  })
+                ),
               },
             },
 
-            demandes: {
-              connect: demandeIds.map((id) => ({
-                id,
-              })),
-            },
-          },
+            include: {
+              responsable: {
+                select: {
+                  id: true,
+                  nom: true,
+                  prenom: true,
+                  login: true,
+                },
+              },
 
-          include: {
-            responsable: {
-              select: {
-                id: true,
-                nom: true,
-                prenom: true,
-                login: true,
+              demandes: {
+                select: {
+                  id: true,
+                  numero: true,
+                  nomDemandeur: true,
+                  prenomDemandeur: true,
+                  statut: true,
+                },
               },
             },
+          });
 
-            demandes: {
-              select: {
-                id: true,
-                numero: true,
-                nomDemandeur: true,
-                prenomDemandeur: true,
-                statut: true,
-              },
-            },
-          },
-        });
-
-      return journal;
-    });
+        return journal;
+      }
+    );
   }
 
   private buildSearchFilter(
     search?: string
-    ): Prisma.JournalClotureWhereInput {
-    if (!search) {
-        return {};
+  ): Prisma.JournalClotureWhereInput {
+    const normalizedSearch =
+      search?.trim();
+
+    if (!normalizedSearch) {
+      return {};
     }
 
     return {
-        OR: [
+      OR: [
         {
-            numero: {
-            contains: search,
+          numero: {
+            contains:
+              normalizedSearch,
+
             mode: "insensitive",
-            },
+          },
         },
 
         {
-            observations: {
-            contains: search,
+          observations: {
+            contains:
+              normalizedSearch,
+
             mode: "insensitive",
-            },
+          },
         },
 
         {
-            responsable: {
+          responsable: {
             is: {
-                nom: {
-                contains: search,
+              nom: {
+                contains:
+                  normalizedSearch,
+
                 mode: "insensitive",
-                },
+              },
             },
-            },
+          },
         },
 
         {
-            responsable: {
+          responsable: {
             is: {
-                prenom: {
-                contains: search,
+              prenom: {
+                contains:
+                  normalizedSearch,
+
                 mode: "insensitive",
-                },
+              },
             },
-            },
+          },
         },
 
         {
-            responsable: {
+          responsable: {
             is: {
-                login: {
-                contains: search,
+              login: {
+                contains:
+                  normalizedSearch,
+
                 mode: "insensitive",
-                },
+              },
             },
-            },
+          },
         },
-        ],
+      ],
     };
-    }
+  }
 
-    async findAll(
+  async findAll(
     page: number,
     limit: number,
     search?: string
-    ) {
-    const skip = (page - 1) * limit;
+  ) {
+    const skip =
+      (page - 1) * limit;
 
     const where =
-        this.buildSearchFilter(search);
+      this.buildSearchFilter(
+        search
+      );
 
-    const [data, total] =
-        await Promise.all([
-        prisma.journalCloture.findMany({
-            where,
-            skip,
-            take: limit,
+    const [
+      data,
+      total,
+    ] = await Promise.all([
+      prisma.journalCloture.findMany({
+        where,
+        skip,
+        take: limit,
 
-            orderBy: {
-            dateJour: "desc",
-            },
-
-            include: {
-            responsable: {
-                select: {
-                id: true,
-                nom: true,
-                prenom: true,
-                login: true,
-                },
-            },
-
-            _count: {
-                select: {
-                demandes: true,
-                },
-            },
-            },
-        }),
-
-        prisma.journalCloture.count({
-            where,
-        }),
-        ]);
-
-    return {
-        data,
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(
-        total / limit
-        ),
-    };
-    }
-
-    async findById(id: string) {
-    return prisma.journalCloture.findUnique({
-        where: {
-        id,
+        orderBy: {
+          dateJour: "desc",
         },
 
         include: {
-        responsable: {
+          responsable: {
             select: {
+              id: true,
+              nom: true,
+              prenom: true,
+              login: true,
+            },
+          },
+
+          _count: {
+            select: {
+              demandes: true,
+            },
+          },
+        },
+      }),
+
+      prisma.journalCloture.count({
+        where,
+      }),
+    ]);
+
+    return {
+      data,
+      total,
+      page,
+      limit,
+
+      totalPages:
+        Math.ceil(
+          total / limit
+        ),
+    };
+  }
+
+  async findById(
+    id: string
+  ) {
+    return prisma.journalCloture.findUnique({
+      where: {
+        id,
+      },
+
+      include: {
+        responsable: {
+          select: {
             id: true,
             nom: true,
             prenom: true,
             login: true,
-            },
+          },
         },
 
         demandes: {
-            orderBy: {
+          orderBy: {
             numero: "asc",
-            },
+          },
 
-            select: {
+          select: {
             id: true,
             numero: true,
             nomDemandeur: true,
@@ -289,9 +320,9 @@ export class JournalClotureRepository {
             statut: true,
             motifRejet: true,
             updatedAt: true,
-            },
+          },
         },
-        },
+      },
     });
-    }
+  }
 }
