@@ -7,6 +7,7 @@ import roleRoutes from "./routes/role.route";
 import demandeRoutes from "./routes/demande.routes";
 import journalClotureRoutes from "./routes/journal-cloture.routes";
 import dashboardRoutes from "./routes/dashboard.routes";
+import cniRoutes from "./routes/cni.routes"; 
 
 const app = express();
 
@@ -23,6 +24,8 @@ app.use("/api/roles", roleRoutes); // Utilisation des routes des rôles
 app.use("/api/demandes", demandeRoutes); // Utilisation des routes des demandes
 app.use("/api/journaux-cloture",journalClotureRoutes);
 app.use("/api/dashboard",dashboardRoutes);
+app.use("/api/cni",cniRoutes);
+
 app.use(errorMiddleware);
 
 // Route de test

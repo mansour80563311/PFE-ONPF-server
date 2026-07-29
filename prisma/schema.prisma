@@ -61,26 +61,65 @@ enum StatutDocument {
   NON_CONFORME
 }
 
+enum StatutVerificationCni {
+  NON_VERIFIEE
+  VERIFIEE
+  ECHEC
+  INDISPONIBLE
+}
+
 model Demande {
   id     String @id @default(uuid())
   numero String @unique
 
+  /**
+   * Informations du demandeur.
+   */
   nomDemandeur    String
   prenomDemandeur String
   cin             String
   telephone       String
   email           String?
 
+  /**
+   * Informations éventuellement retournées
+   * par le Web Service CNI.
+   */
+  dateNaissanceDemandeur DateTime? @db.Date
+  adresseDemandeur       String?
+
+  /**
+   * Informations de traçabilité de la
+   * vérification d’identité.
+   */
+  statutVerificationCni    StatutVerificationCni @default(NON_VERIFIEE)
+  dateVerificationCni      DateTime?
+  sourceVerificationCni    String?
+  referenceVerificationCni String?
+  messageVerificationCni   String?
+
+  /**
+   * Informations foncières.
+   */
   referenceFonciere String
   adresseBien       String
 
+  /**
+   * Cycle de traitement.
+   */
   statut       StatutDemande @default(EN_ATTENTE)
   observations String?
   motifRejet   String?
 
+  /**
+   * Journal de clôture.
+   */
   journalClotureId String?
   journalCloture   JournalCloture? @relation(fields: [journalClotureId], references: [id])
 
+  /**
+   * Agent ayant créé la demande.
+   */
   utilisateurId String
   utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id])
 
@@ -92,6 +131,8 @@ model Demande {
 
   @@unique([cin, referenceFonciere])
   @@index([journalClotureId])
+  @@index([cin])
+  @@index([statutVerificationCni])
 }
 
 model HistoriqueStatutDemande {
