@@ -120,6 +120,19 @@ router.post(
   )
 );
 
+// Vérifier ou régulariser l’identité CNI :
+// Administrateur ou Agent propriétaire
+router.patch(
+  "/:id/verifier-cni",
+  roleMiddleware(
+    "ADMIN",
+    "AGENT"
+  ),
+  demandeController.verifierCni.bind(
+    demandeController
+  )
+);
+
 // Mise à jour du statut
 router.patch(
   "/:id/status",

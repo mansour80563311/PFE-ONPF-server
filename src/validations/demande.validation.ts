@@ -1,48 +1,98 @@
-import { StatutDemande } from "@prisma/client";
-import { z } from "zod";
+import {
+  StatutDemande,
+} from "@prisma/client";
 
-export const createDemandeSchema = z.object({
-  nomDemandeur: z
-    .string()
-    .min(2, "Le nom est obligatoire."),
+import {
+  z,
+} from "zod";
 
-  prenomDemandeur: z
-    .string()
-    .min(2, "Le prénom est obligatoire."),
+export const createDemandeSchema =
+  z.object({
+    nomDemandeur: z
+      .string()
+      .trim()
+      .min(
+        2,
+        "Le nom est obligatoire."
+      ),
 
-  cin: z
-    .string()
-    .regex(/^\d{8}$/,"Le CIN doit contenir exactement 8 chiffres."),
+    prenomDemandeur: z
+      .string()
+      .trim()
+      .min(
+        2,
+        "Le prénom est obligatoire."
+      ),
 
-  telephone: z
-    .string()
-    .regex(/^\d{8}$/, "Le téléphone est invalide."),
+    cin: z
+      .string()
+      .trim()
+      .regex(
+        /^\d{8}$/,
+        "Le CIN doit contenir exactement 8 chiffres."
+      ),
 
-  email: z
-    .email("Email invalide.")
-    .optional()
-    .or(z.literal("")),
+    telephone: z
+      .string()
+      .trim()
+      .regex(
+        /^\d{8}$/,
+        "Le téléphone est invalide."
+      ),
 
-  referenceFonciere: z
-    .string()
-    .min(2, "La référence foncière est obligatoire."),
+    email: z
+      .union([
+        z.email(
+          "Email invalide."
+        ),
+        z.literal(""),
+      ])
+      .optional(),
 
-  adresseBien: z
-    .string()
-    .min(5, "L'adresse est obligatoire."),
+    referenceFonciere: z
+      .string()
+      .trim()
+      .min(
+        2,
+        "La référence foncière est obligatoire."
+      ),
 
-  observations: z
-    .string()
-    .optional(),
+    adresseBien: z
+      .string()
+      .trim()
+      .min(
+        5,
+        "L'adresse du bien est obligatoire."
+      ),
 
-  
-});
+    observations: z
+      .string()
+      .trim()
+      .max(
+        500,
+        "Les observations ne peuvent pas dépasser 500 caractères."
+      )
+      .optional(),
+  });
 
+/*
+ * Les données retournées par le service CNI
+ * ne sont volontairement pas acceptées depuis
+ * le frontend.
+ *
+ * Le backend récupère lui-même :
+ * - la date de naissance ;
+ * - l’adresse officielle ;
+ * - la référence de vérification ;
+ * - la source de vérification.
+ */
 export const updateDemandeSchema =
   createDemandeSchema.partial();
 
 export type CreateDemandeDto =
-  z.infer<typeof createDemandeSchema>;
+  z.infer<
+    typeof createDemandeSchema
+  >;
 
 export type CreateDemandeServiceDto =
   CreateDemandeDto & {
@@ -50,51 +100,77 @@ export type CreateDemandeServiceDto =
   };
 
 export type UpdateDemandeDto =
-  z.infer<typeof updateDemandeSchema>;
+  z.infer<
+    typeof updateDemandeSchema
+  >;
 
-export const listDemandesSchema = z.object({
-  page: z.coerce.number().min(1).default(1),
+export const listDemandesSchema =
+  z.object({
+    page: z.coerce
+      .number()
+      .min(1)
+      .default(1),
 
-  limit: z.coerce.number().min(1).max(100).default(10),
+    limit: z.coerce
+      .number()
+      .min(1)
+      .max(100)
+      .default(10),
 
-  search: z.string().optional(),
-});
-
-export type ListDemandesDto = z.infer<
-  typeof listDemandesSchema
->;
-
-export const updateDemandeStatusSchema = z
-  .object({
-    statut: z.nativeEnum(StatutDemande),
-
-    motifRejet: z
+    search: z
       .string()
-      .trim()
-      .min(
-        5,
-        "Le motif de rejet doit contenir au moins 5 caractères."
-      )
-      .max(
-        500,
-        "Le motif de rejet ne peut pas dépasser 500 caractères."
-      )
       .optional(),
-  })
-  .superRefine((data, ctx) => {
-    if (
-      data.statut === StatutDemande.REJETEE &&
-      !data.motifRejet
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["motifRejet"],
-        message:
-          "Le motif de rejet est obligatoire lorsqu’une demande est rejetée.",
-      });
-    }
   });
 
-export type UpdateDemandeStatusDto = z.infer<
-  typeof updateDemandeStatusSchema
->;
+export type ListDemandesDto =
+  z.infer<
+    typeof listDemandesSchema
+  >;
+
+export const updateDemandeStatusSchema =
+  z
+    .object({
+      statut:
+        z.nativeEnum(
+          StatutDemande
+        ),
+
+      motifRejet: z
+        .string()
+        .trim()
+        .min(
+          5,
+          "Le motif de rejet doit contenir au moins 5 caractères."
+        )
+        .max(
+          500,
+          "Le motif de rejet ne peut pas dépasser 500 caractères."
+        )
+        .optional(),
+    })
+    .superRefine(
+      (
+        data,
+        ctx
+      ) => {
+        if (
+          data.statut ===
+            StatutDemande.REJETEE &&
+          !data.motifRejet
+        ) {
+          ctx.addIssue({
+            code: "custom",
+            path: [
+              "motifRejet",
+            ],
+            message:
+              "Le motif de rejet est obligatoire lorsqu’une demande est rejetée.",
+          });
+        }
+      }
+    );
+
+export type UpdateDemandeStatusDto =
+  z.infer<
+    typeof updateDemandeStatusSchema
+  >;

@@ -149,6 +149,31 @@ export class DemandeController {
     }
   }
 
+  async verifierCni(
+    req: Request<DemandeParams>,
+    res: Response,
+    next: NextFunction
+  ) {
+    try {
+      const demande =
+        await this.demandeService
+          .verifierCni(
+            req.params.id,
+            req.user!.userId,
+            req.user!.role
+          );
+
+      return res.json(
+        ApiResponse.success(
+          "Identité CNI vérifiée et demande mise à jour avec succès.",
+          demande
+        )
+      );
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async updateStatus(
     req: Request<DemandeParams>,
     res: Response,

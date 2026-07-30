@@ -45,7 +45,21 @@ const identitesSimulees: Readonly<
     referenceVerification:
       "CNI-MOCK-11223344",
   },
+
+  "85963219": {
+    cin: "85963219",
+    nom: "DADOU",
+    prenom: "Mansour",
+    dateNaissance: new Date(
+      "1997-06-18T00:00:00.000Z"
+    ),
+    adresse: "Tunis, Cité El Khadra",
+    referenceVerification:
+      "CNI-MOCK-85963219",
+  },
 };
+
+
 
 export class CniService {
   async verifierIdentite(

@@ -1,6 +1,7 @@
 import {
   StatutDemande,
   StatutDocument,
+  StatutVerificationCni,
   TypeDocument,
 } from "@prisma/client";
 
@@ -28,6 +29,10 @@ import type {
   UpdateDemandeDto,
 } from "../validations/demande.validation";
 
+import {
+  CniService,
+} from "./cni.service";
+
 interface DemandeAccessData {
   utilisateurId: string;
   statut: StatutDemande;
@@ -45,6 +50,9 @@ export class DemandeService {
 
   private documentRepository =
     new DemandeDocumentRepository();
+
+  private cniService =
+  new CniService();
 
   /**
    * Filtre appliqué à la liste des demandes.
@@ -192,21 +200,68 @@ export class DemandeService {
       );
     }
 
+    /*
+    * Le backend vérifie lui-même le CIN.
+    *
+    * Les informations CNI envoyées par le
+    * frontend ne sont jamais considérées
+    * comme fiables.
+    */
+    const identite =
+      await this.cniService
+        .verifierIdentite(
+          data.cin
+        );
+
+    if (!identite) {
+      throw new AppError(
+        "Aucune identité trouvée pour ce numéro CIN.",
+        404
+      );
+    }
+
     const numero =
       await this.generateNumero();
+
+    const dateVerificationCni =
+      new Date();
 
     return this.demandeRepository
       .create({
         numero,
 
+        /*
+        * Le nom et le prénom officiels sont
+        * ceux retournés par le service CNI.
+        */
         nomDemandeur:
-          data.nomDemandeur,
+          identite.nom,
 
         prenomDemandeur:
-          data.prenomDemandeur,
+          identite.prenom,
 
         cin:
-          data.cin,
+          identite.cin,
+
+        dateNaissanceDemandeur:
+          identite.dateNaissance,
+
+        adresseDemandeur:
+          identite.adresse,
+
+        statutVerificationCni:
+          StatutVerificationCni.VERIFIEE,
+
+        dateVerificationCni,
+
+        sourceVerificationCni:
+          "SERVICE_CNI_SIMULE",
+
+        referenceVerificationCni:
+          identite.referenceVerification,
+
+        messageVerificationCni:
+          "Identité vérifiée avec succès.",
 
         telephone:
           data.telephone,
@@ -234,6 +289,7 @@ export class DemandeService {
         },
       });
   }
+
 
   async findAll(
     query: ListDemandesDto,
@@ -347,13 +403,6 @@ export class DemandeService {
       );
     }
 
-    /*
-     * Un Agent ne peut modifier sa demande
-     * que lorsqu’elle est encore EN_ATTENTE.
-     *
-     * L’Administrateur conserve son droit de
-     * correction sur une demande EN_COURS.
-     */
     if (
       isAgent &&
       demande.statut !==
@@ -365,58 +414,152 @@ export class DemandeService {
       );
     }
 
+    const identityFieldsProvided =
+      data.cin !== undefined ||
+      data.nomDemandeur !==
+        undefined ||
+      data.prenomDemandeur !==
+        undefined;
+
+    const identityUpdate:
+      Prisma.DemandeUpdateInput =
+        {};
+
+    /*
+    * Dès qu’un champ d’identité est envoyé,
+    * le CIN est revérifié.
+    */
+    if (identityFieldsProvided) {
+      const cinToVerify =
+        data.cin ??
+        demande.cin;
+
+      const identite =
+        await this.cniService
+          .verifierIdentite(
+            cinToVerify
+          );
+
+      if (!identite) {
+        throw new AppError(
+          "Aucune identité trouvée pour ce numéro CIN.",
+          404
+        );
+      }
+
+      identityUpdate.cin =
+        identite.cin;
+
+      identityUpdate.nomDemandeur =
+        identite.nom;
+
+      identityUpdate.prenomDemandeur =
+        identite.prenom;
+
+      identityUpdate
+        .dateNaissanceDemandeur =
+          identite.dateNaissance;
+
+      identityUpdate.adresseDemandeur =
+        identite.adresse;
+
+      identityUpdate
+        .statutVerificationCni =
+          StatutVerificationCni.VERIFIEE;
+
+      identityUpdate
+        .dateVerificationCni =
+          new Date();
+
+      identityUpdate
+        .sourceVerificationCni =
+          "SERVICE_CNI_SIMULE";
+
+      identityUpdate
+        .referenceVerificationCni =
+          identite.referenceVerification;
+
+      identityUpdate
+        .messageVerificationCni =
+          "Identité vérifiée avec succès.";
+    }
+
+    const cinFinal =
+      identityFieldsProvided
+        ? data.cin ??
+          demande.cin
+        : demande.cin;
+
+    const referenceFinal =
+      data.referenceFonciere ??
+      demande.referenceFonciere;
+
+    /*
+    * Vérification de l’unicité lorsque le CIN
+    * ou la référence foncière est modifié.
+    */
+    if (
+      data.cin !== undefined ||
+      data.referenceFonciere !==
+        undefined
+    ) {
+      const existing =
+        await this.demandeRepository
+          .findByCinAndReference(
+            cinFinal,
+            referenceFinal
+          );
+
+      if (
+        existing &&
+        existing.id !== id
+      ) {
+        throw new AppError(
+          "Une demande existe déjà pour ce demandeur et cette référence foncière.",
+          409
+        );
+      }
+    }
+
     return this.demandeRepository
-      .update(id, {
-        ...(data.nomDemandeur !==
-          undefined && {
-          nomDemandeur:
-            data.nomDemandeur,
-        }),
+      .update(
+        id,
+        {
+          ...identityUpdate,
 
-        ...(data.prenomDemandeur !==
-          undefined && {
-          prenomDemandeur:
-            data.prenomDemandeur,
-        }),
+          ...(data.telephone !==
+            undefined && {
+            telephone:
+              data.telephone,
+          }),
 
-        ...(data.cin !==
-          undefined && {
-          cin:
-            data.cin,
-        }),
+          ...(data.referenceFonciere !==
+            undefined && {
+            referenceFonciere:
+              data.referenceFonciere,
+          }),
 
-        ...(data.telephone !==
-          undefined && {
-          telephone:
-            data.telephone,
-        }),
+          ...(data.adresseBien !==
+            undefined && {
+            adresseBien:
+              data.adresseBien,
+          }),
 
-        ...(data.referenceFonciere !==
-          undefined && {
-          referenceFonciere:
-            data.referenceFonciere,
-        }),
+          ...(data.email !==
+            undefined && {
+            email:
+              data.email || null,
+          }),
 
-        ...(data.adresseBien !==
-          undefined && {
-          adresseBien:
-            data.adresseBien,
-        }),
-
-        ...(data.email !==
-          undefined && {
-          email:
-            data.email || null,
-        }),
-
-        ...(data.observations !==
-          undefined && {
-          observations:
-            data.observations ||
-            null,
-        }),
-      });
-  }
+          ...(data.observations !==
+            undefined && {
+            observations:
+              data.observations ||
+              null,
+          }),
+        }
+      );
+   }
 
   private async verifyDocumentsBeforeValidation(
     demandeId: string
@@ -532,6 +675,169 @@ export class DemandeService {
     }
   }
 
+  async verifierCni(
+    id: string,
+    utilisateurId: string,
+    role: string
+  ) {
+    if (
+      role !== "ADMIN" &&
+      role !== "AGENT"
+    ) {
+      throw new AppError(
+        "Seul un agent peut vérifier l’identité CNI d’une demande.",
+        403
+      );
+    }
+
+    /*
+    * findById contrôle également que l’Agent
+    * est propriétaire de la demande.
+    */
+    const demande =
+      await this.findById(
+        id,
+        utilisateurId,
+        role
+      );
+
+    /*
+    * Une demande déjà transmise ou terminée
+    * ne doit plus être modifiée.
+    */
+    if (
+      demande.statut !==
+      StatutDemande.EN_ATTENTE
+    ) {
+      throw new AppError(
+        "Seule une demande en attente peut faire l’objet d’une vérification CNI.",
+        400
+      );
+    }
+
+    const dateVerificationCni =
+      new Date();
+
+    try {
+      const identite =
+        await this.cniService
+          .verifierIdentite(
+            demande.cin
+          );
+
+      /*
+      * Le CIN possède un format valide, mais
+      * aucune identité n’a été trouvée.
+      */
+      if (!identite) {
+        await this.demandeRepository
+          .update(
+            id,
+            {
+              statutVerificationCni:
+                StatutVerificationCni.ECHEC,
+
+              dateVerificationCni,
+
+              sourceVerificationCni:
+                "SERVICE_CNI_SIMULE",
+
+              referenceVerificationCni:
+                null,
+
+              messageVerificationCni:
+                "Aucune identité trouvée pour ce numéro CIN.",
+            }
+          );
+
+        throw new AppError(
+          "Aucune identité trouvée pour ce numéro CIN.",
+          404
+        );
+      }
+
+      /*
+      * Les anciennes informations sont
+      * remplacées par les données officielles
+      * retournées par le service CNI.
+      */
+      return this.demandeRepository
+        .update(
+          id,
+          {
+            cin:
+              identite.cin,
+
+            nomDemandeur:
+              identite.nom,
+
+            prenomDemandeur:
+              identite.prenom,
+
+            dateNaissanceDemandeur:
+              identite.dateNaissance,
+
+            adresseDemandeur:
+              identite.adresse,
+
+            statutVerificationCni:
+              StatutVerificationCni.VERIFIEE,
+
+            dateVerificationCni,
+
+            sourceVerificationCni:
+              "SERVICE_CNI_SIMULE",
+
+            referenceVerificationCni:
+              identite.referenceVerification,
+
+            messageVerificationCni:
+              "Identité vérifiée avec succès.",
+          }
+        );
+    } catch (error) {
+      /*
+      * Les erreurs métier 404 doivent être
+      * transmises sans être transformées en
+      * erreur d’indisponibilité.
+      */
+      if (
+        error instanceof AppError
+      ) {
+        throw error;
+      }
+
+      /*
+      * Une erreur technique du service CNI
+      * est enregistrée dans la demande.
+      */
+      await this.demandeRepository
+        .update(
+          id,
+          {
+            statutVerificationCni:
+              StatutVerificationCni.INDISPONIBLE,
+
+            dateVerificationCni,
+
+            sourceVerificationCni:
+              "SERVICE_CNI_SIMULE",
+
+            referenceVerificationCni:
+              null,
+
+            messageVerificationCni:
+              "Le service CNI est temporairement indisponible.",
+          }
+        );
+
+      throw new AppError(
+        "Le service CNI est temporairement indisponible.",
+        503
+      );
+    }
+  }
+
   async updateStatus(
     id: string,
     nouveauStatut: StatutDemande,
@@ -593,6 +899,23 @@ export class DemandeService {
       throw new AppError(
         "Vous ne pouvez transmettre que vos propres demandes.",
         403
+      );
+    }
+
+    /*
+    * Une demande ne peut être transmise au
+    * Responsable que si l’identité du demandeur
+    * a été vérifiée par le service CNI.
+    */
+    if (
+      nouveauStatut ===
+        StatutDemande.EN_COURS &&
+      demande.statutVerificationCni !==
+        StatutVerificationCni.VERIFIEE
+    ) {
+      throw new AppError(
+        "La demande ne peut pas être transmise tant que l’identité CNI n’est pas vérifiée.",
+        400
       );
     }
 
