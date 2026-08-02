@@ -32,6 +32,19 @@ async function main() {
     },
   });
 
+  await prisma.role.upsert({
+    where: {
+      nom: "CAISSIER",
+    },
+    update: {
+      description: "Agent chargé de l’encaissement des paiements",
+    },
+    create: {
+      nom: "CAISSIER",
+      description: "Agent chargé de l’encaissement des paiements",
+    },
+  });
+
   // Vérifier si l'admin existe déjà
   const existingAdmin = await prisma.utilisateur.findUnique({
     where: {

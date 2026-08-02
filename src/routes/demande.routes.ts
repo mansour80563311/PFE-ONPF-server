@@ -1,10 +1,24 @@
 import { Router } from "express";
 
-import { DemandeController } from "../controllers/demande.controller";
-import { authMiddleware } from "../middlewares/auth.middleware";
-import { roleMiddleware } from "../middlewares/role.middleware";
+import {
+  DemandeController,
+} from "../controllers/demande.controller";
 
-import { DemandeDocumentController } from "../controllers/demande-document.controller";
+import {
+  DemandeDocumentController,
+} from "../controllers/demande-document.controller";
+
+import {
+  PaiementController,
+} from "../controllers/paiement.controller";
+
+import {
+  authMiddleware,
+} from "../middlewares/auth.middleware";
+
+import {
+  roleMiddleware,
+} from "../middlewares/role.middleware";
 
 import {
   uploadDemandeDocument,
@@ -18,11 +32,64 @@ const demandeController =
 const demandeDocumentController =
   new DemandeDocumentController();
 
+const paiementController =
+  new PaiementController();
+
 /*
  * Toutes les routes suivantes nécessitent
  * un utilisateur authentifié.
  */
 router.use(authMiddleware);
+
+/*
+ * PAIEMENT D’UNE DEMANDE
+ */
+
+/*
+ * Enregistrer le paiement total
+ * d’une demande.
+ *
+ * POST /api/demandes/:demandeId/paiement
+ *
+ * Accès :
+ * - Administrateur ;
+ * - Caissier.
+ */
+router.post(
+  "/:demandeId/paiement",
+  roleMiddleware(
+    "ADMIN",
+    "CAISSIER"
+  ),
+  paiementController.create.bind(
+    paiementController
+  )
+);
+
+/*
+ * Consulter le paiement associé
+ * à une demande.
+ *
+ * GET /api/demandes/:demandeId/paiement
+ *
+ * Le service vérifie ensuite les droits :
+ * - l’Administrateur voit tous les paiements ;
+ * - le Caissier voit les paiements ;
+ * - l’Agent voit uniquement ceux de ses demandes ;
+ * - le Responsable voit ceux des demandes transmises.
+ */
+router.get(
+  "/:demandeId/paiement",
+  roleMiddleware(
+    "ADMIN",
+    "CAISSIER",
+    "AGENT",
+    "RESPONSABLE"
+  ),
+  paiementController.findByDemandeId.bind(
+    paiementController
+  )
+);
 
 /*
  * DOCUMENTS

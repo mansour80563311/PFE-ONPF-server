@@ -36,6 +36,7 @@ model Utilisateur {
   historiqueStatuts   HistoriqueStatutDemande[]
   documentsTeleverses DemandeDocument[]
   journauxCloture     JournalCloture[]
+  paiementsEncaisses  Paiement[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -66,6 +67,21 @@ enum StatutVerificationCni {
   VERIFIEE
   ECHEC
   INDISPONIBLE
+}
+
+enum LangueCertificat {
+  FRANCAIS
+  ARABE
+  ANGLAIS
+}
+
+enum ModePaiement {
+  ESPECES
+}
+
+enum StatutPaiement {
+  PAYE
+  REMBOURSE
 }
 
 model Demande {
@@ -99,6 +115,19 @@ model Demande {
   messageVerificationCni   String?
 
   /**
+   * Paramètres du certificat et calcul tarifaire.
+   * Les montants sont enregistrés avec trois
+   * décimales, conformément au dinar tunisien.
+   */
+  nombreExemplaires  Int              @default(1)
+  langueCertificat   LangueCertificat @default(FRANCAIS)
+  traductionDemandee Boolean          @default(false)
+
+  prixUnitaire         Decimal @default(30.000) @db.Decimal(10, 3)
+  supplementTraduction Decimal @default(0.000) @db.Decimal(10, 3)
+  montantTotal         Decimal @default(30.000) @db.Decimal(10, 3)
+
+  /**
    * Informations foncières.
    */
   referenceFonciere String
@@ -125,6 +154,7 @@ model Demande {
 
   historiqueStatuts   HistoriqueStatutDemande[]
   documentsTeleverses DemandeDocument[]
+  paiement            Paiement?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -198,4 +228,57 @@ model JournalCloture {
   updatedAt DateTime @updatedAt
 
   @@index([responsableId])
+}
+
+model Paiement {
+  id         String @id @default(uuid())
+  numeroRecu String @unique
+
+  /**
+   * Montant calculé par le backend.
+   */
+  montantExigible Decimal @db.Decimal(10, 3)
+
+  /**
+   * Somme remise physiquement par le citoyen.
+   */
+  montantRemis Decimal @db.Decimal(10, 3)
+
+  /**
+   * Monnaie rendue au citoyen.
+   */
+  monnaieRendue Decimal @default(0.000) @db.Decimal(10, 3)
+
+  /**
+   * Montant réellement conservé par la caisse.
+   * Il doit correspondre au montant exigible.
+   */
+  montantEncaisse Decimal @db.Decimal(10, 3)
+
+  modePaiement ModePaiement   @default(ESPECES)
+  statut       StatutPaiement @default(PAYE)
+
+  montantEnLettres String?
+  observations     String?
+
+  datePaiement DateTime @default(now())
+
+  /**
+   * Une demande ne peut avoir qu’un seul
+   * paiement.
+   */
+  demandeId String  @unique
+  demande   Demande @relation(fields: [demandeId], references: [id], onDelete: Restrict)
+
+  /**
+   * Utilisateur ayant réalisé l’encaissement.
+   */
+  caissierId String
+  caissier   Utilisateur @relation(fields: [caissierId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([caissierId])
+  @@index([datePaiement])
 }

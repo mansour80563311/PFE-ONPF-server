@@ -1,6 +1,8 @@
 import {
+  LangueCertificat,
   StatutDemande,
   StatutDocument,
+  StatutPaiement,
   StatutVerificationCni,
   TypeDocument,
 } from "@prisma/client";
@@ -18,6 +20,10 @@ import {
 import {
   DemandeRepository,
 } from "../repositories/demande.repository";
+
+import {
+  PaiementRepository,
+} from "../repositories/paiement.repository";
 
 import {
   UserRepository,
@@ -38,6 +44,19 @@ interface DemandeAccessData {
   statut: StatutDemande;
 }
 
+/*
+ * Tarification actuelle du certificat.
+ *
+ * Ces valeurs sont définies côté backend
+ * afin qu’elles ne puissent pas être
+ * modifiées depuis le frontend.
+ */
+const PRIX_UNITAIRE_CERTIFICAT =
+  30;
+
+const SUPPLEMENT_TRADUCTION =
+  40;
+
 export class DemandeService {
   private static readonly PREFIX =
     "DF";
@@ -51,11 +70,15 @@ export class DemandeService {
   private documentRepository =
     new DemandeDocumentRepository();
 
+  private paiementRepository =
+    new PaiementRepository();
+
   private cniService =
-  new CniService();
+    new CniService();
 
   /**
-   * Filtre appliqué à la liste des demandes.
+   * Filtre appliqué à la liste des demandes
+   * selon le rôle de l’utilisateur connecté.
    */
   private buildListAccessFilter(
     utilisateurId: string,
@@ -71,12 +94,24 @@ export class DemandeService {
       };
     }
 
+    if (role === "CAISSIER") {
+      return {
+        statut:
+          StatutDemande.EN_ATTENTE,
+
+        paiement: {
+          is: null,
+        },
+      };
+    }
+
     if (role === "RESPONSABLE") {
       return {
         statut:
           StatutDemande.EN_COURS,
       };
     }
+
 
     throw new AppError(
       "Rôle utilisateur non autorisé.",
@@ -85,13 +120,8 @@ export class DemandeService {
   }
 
   /**
-   * Vérifie l’accès à une demande précise.
-   *
-   * Le Responsable ne peut jamais accéder
-   * aux demandes EN_ATTENTE.
-   *
-   * Les demandes finalisées restent
-   * consultables depuis les journaux.
+   * Vérifie l’autorisation de consulter
+   * une demande précise.
    */
   private assertCanReadDemande(
     demande: DemandeAccessData,
@@ -106,6 +136,18 @@ export class DemandeService {
       role === "AGENT" &&
       demande.utilisateurId ===
         utilisateurId
+    ) {
+      return;
+    }
+      /*
+   * Le Caissier peut consulter une demande
+   * tant qu’elle est encore à l’étape
+   * EN_ATTENTE.
+   */
+    if (
+      role === "CAISSIER" &&
+      demande.statut ===
+        StatutDemande.EN_ATTENTE
     ) {
       return;
     }
@@ -124,6 +166,91 @@ export class DemandeService {
     );
   }
 
+  /**
+   * Calcule la tarification d’une demande.
+   *
+   * Formule :
+   *
+   * nombre d’exemplaires × 30 DT
+   * + 40 DT lorsqu’une traduction
+   * est demandée.
+   */
+  private calculateTarification(
+    nombreExemplaires: number,
+    langueCertificat:
+      LangueCertificat,
+    traductionDemandee: boolean
+  ) {
+    if (
+      !Number.isInteger(
+        nombreExemplaires
+      ) ||
+      nombreExemplaires < 1
+    ) {
+      throw new AppError(
+        "Le nombre d’exemplaires doit être un entier supérieur ou égal à 1.",
+        400
+      );
+    }
+
+    /*
+     * Le français est considéré comme
+     * la langue de base.
+     */
+    if (
+      traductionDemandee &&
+      langueCertificat ===
+        LangueCertificat.FRANCAIS
+    ) {
+      throw new AppError(
+        "Une traduction ne peut pas être demandée vers la langue française.",
+        400
+      );
+    }
+
+    /*
+     * Une langue différente du français
+     * nécessite obligatoirement l’option
+     * de traduction.
+     */
+    if (
+      !traductionDemandee &&
+      langueCertificat !==
+        LangueCertificat.FRANCAIS
+    ) {
+      throw new AppError(
+        "La traduction doit être sélectionnée pour un certificat en arabe ou en anglais.",
+        400
+      );
+    }
+
+    const prixUnitaire =
+      PRIX_UNITAIRE_CERTIFICAT;
+
+    const supplementTraduction =
+      traductionDemandee
+        ? SUPPLEMENT_TRADUCTION
+        : 0;
+
+    const montantTotal =
+      nombreExemplaires *
+        prixUnitaire +
+      supplementTraduction;
+
+    return {
+      nombreExemplaires,
+      langueCertificat,
+      traductionDemandee,
+      prixUnitaire,
+      supplementTraduction,
+      montantTotal,
+    };
+  }
+
+  /**
+   * Génère automatiquement le numéro
+   * de la prochaine demande.
+   */
   private async generateNumero():
     Promise<string> {
     const lastDemande =
@@ -159,6 +286,9 @@ export class DemandeService {
     return `${DemandeService.PREFIX}-${year}-${nextNumber}`;
   }
 
+  /**
+   * Crée une nouvelle demande.
+   */
   async create(
     data: CreateDemandeServiceDto,
     role: string
@@ -201,12 +331,12 @@ export class DemandeService {
     }
 
     /*
-    * Le backend vérifie lui-même le CIN.
-    *
-    * Les informations CNI envoyées par le
-    * frontend ne sont jamais considérées
-    * comme fiables.
-    */
+     * Le backend vérifie lui-même le CIN.
+     *
+     * Les données d’identité envoyées par
+     * le frontend ne sont pas considérées
+     * comme fiables.
+     */
     const identite =
       await this.cniService
         .verifierIdentite(
@@ -220,6 +350,16 @@ export class DemandeService {
       );
     }
 
+    /*
+     * Le calcul est réalisé côté serveur.
+     */
+    const tarification =
+      this.calculateTarification(
+        data.nombreExemplaires,
+        data.langueCertificat,
+        data.traductionDemandee
+      );
+
     const numero =
       await this.generateNumero();
 
@@ -231,9 +371,9 @@ export class DemandeService {
         numero,
 
         /*
-        * Le nom et le prénom officiels sont
-        * ceux retournés par le service CNI.
-        */
+         * Informations officielles retournées
+         * par le service CNI.
+         */
         nomDemandeur:
           identite.nom,
 
@@ -263,6 +403,33 @@ export class DemandeService {
         messageVerificationCni:
           "Identité vérifiée avec succès.",
 
+        /*
+         * Informations tarifaires.
+         */
+        nombreExemplaires:
+          tarification
+            .nombreExemplaires,
+
+        langueCertificat:
+          tarification
+            .langueCertificat,
+
+        traductionDemandee:
+          tarification
+            .traductionDemandee,
+
+        prixUnitaire:
+          tarification
+            .prixUnitaire,
+
+        supplementTraduction:
+          tarification
+            .supplementTraduction,
+
+        montantTotal:
+          tarification
+            .montantTotal,
+
         telephone:
           data.telephone,
 
@@ -290,7 +457,10 @@ export class DemandeService {
       });
   }
 
-
+  /**
+   * Liste les demandes accessibles à
+   * l’utilisateur connecté.
+   */
   async findAll(
     query: ListDemandesDto,
     utilisateurId: string,
@@ -337,6 +507,9 @@ export class DemandeService {
     };
   }
 
+  /**
+   * Recherche une demande par son ID.
+   */
   async findById(
     id: string,
     utilisateurId: string,
@@ -362,6 +535,9 @@ export class DemandeService {
     return demande;
   }
 
+  /**
+   * Modifie une demande encore autorisée.
+   */
   async update(
     id: string,
     data: UpdateDemandeDto,
@@ -414,6 +590,22 @@ export class DemandeService {
       );
     }
 
+    /*
+    * Une demande déjà payée ne peut plus être
+    * modifiée afin de préserver la cohérence
+    * entre le reçu et les informations tarifaires.
+    */
+    const paiementExistant =
+      await this.paiementRepository
+        .findByDemandeId(id);
+
+    if (paiementExistant) {
+      throw new AppError(
+        "Une demande déjà payée ne peut plus être modifiée.",
+        400
+      );
+    }
+
     const identityFieldsProvided =
       data.cin !== undefined ||
       data.nomDemandeur !==
@@ -426,9 +618,9 @@ export class DemandeService {
         {};
 
     /*
-    * Dès qu’un champ d’identité est envoyé,
-    * le CIN est revérifié.
-    */
+     * Lorsqu’un champ d’identité est modifié,
+     * le CIN est revérifié.
+     */
     if (identityFieldsProvided) {
       const cinToVerify =
         data.cin ??
@@ -495,9 +687,9 @@ export class DemandeService {
       demande.referenceFonciere;
 
     /*
-    * Vérification de l’unicité lorsque le CIN
-    * ou la référence foncière est modifié.
-    */
+     * Vérification de l’unicité du CIN
+     * et de la référence foncière.
+     */
     if (
       data.cin !== undefined ||
       data.referenceFonciere !==
@@ -521,11 +713,68 @@ export class DemandeService {
       }
     }
 
+    /*
+     * Le montant est recalculé lorsqu’un
+     * paramètre tarifaire est modifié.
+     */
+    const tarificationFieldsProvided =
+      data.nombreExemplaires !==
+        undefined ||
+      data.langueCertificat !==
+        undefined ||
+      data.traductionDemandee !==
+        undefined;
+
+    const tarificationUpdate =
+      tarificationFieldsProvided
+        ? this.calculateTarification(
+            data.nombreExemplaires ??
+              demande
+                .nombreExemplaires,
+
+            data.langueCertificat ??
+              demande
+                .langueCertificat,
+
+            data.traductionDemandee ??
+              demande
+                .traductionDemandee
+          )
+        : null;
+
     return this.demandeRepository
       .update(
         id,
         {
           ...identityUpdate,
+
+          ...(tarificationUpdate
+            ? {
+                nombreExemplaires:
+                  tarificationUpdate
+                    .nombreExemplaires,
+
+                langueCertificat:
+                  tarificationUpdate
+                    .langueCertificat,
+
+                traductionDemandee:
+                  tarificationUpdate
+                    .traductionDemandee,
+
+                prixUnitaire:
+                  tarificationUpdate
+                    .prixUnitaire,
+
+                supplementTraduction:
+                  tarificationUpdate
+                    .supplementTraduction,
+
+                montantTotal:
+                  tarificationUpdate
+                    .montantTotal,
+              }
+            : {}),
 
           ...(data.telephone !==
             undefined && {
@@ -559,8 +808,12 @@ export class DemandeService {
           }),
         }
       );
-   }
+  }
 
+  /**
+   * Vérifie les documents nécessaires
+   * avant la validation d’une demande.
+   */
   private async verifyDocumentsBeforeValidation(
     demandeId: string
   ): Promise<void> {
@@ -642,8 +895,8 @@ export class DemandeService {
       piecesManquantes.length > 0 ||
       piecesNonConformes.length > 0
     ) {
-      const details: string[] =
-        [];
+      const details:
+        string[] = [];
 
       if (
         piecesManquantes.length > 0
@@ -675,6 +928,10 @@ export class DemandeService {
     }
   }
 
+  /**
+   * Vérifie ou régularise le CIN d’une
+   * demande existante.
+   */
   async verifierCni(
     id: string,
     utilisateurId: string,
@@ -690,10 +947,6 @@ export class DemandeService {
       );
     }
 
-    /*
-    * findById contrôle également que l’Agent
-    * est propriétaire de la demande.
-    */
     const demande =
       await this.findById(
         id,
@@ -701,10 +954,6 @@ export class DemandeService {
         role
       );
 
-    /*
-    * Une demande déjà transmise ou terminée
-    * ne doit plus être modifiée.
-    */
     if (
       demande.statut !==
       StatutDemande.EN_ATTENTE
@@ -725,10 +974,6 @@ export class DemandeService {
             demande.cin
           );
 
-      /*
-      * Le CIN possède un format valide, mais
-      * aucune identité n’a été trouvée.
-      */
       if (!identite) {
         await this.demandeRepository
           .update(
@@ -756,11 +1001,6 @@ export class DemandeService {
         );
       }
 
-      /*
-      * Les anciennes informations sont
-      * remplacées par les données officielles
-      * retournées par le service CNI.
-      */
       return this.demandeRepository
         .update(
           id,
@@ -789,28 +1029,20 @@ export class DemandeService {
               "SERVICE_CNI_SIMULE",
 
             referenceVerificationCni:
-              identite.referenceVerification,
+              identite
+                .referenceVerification,
 
             messageVerificationCni:
               "Identité vérifiée avec succès.",
           }
         );
     } catch (error) {
-      /*
-      * Les erreurs métier 404 doivent être
-      * transmises sans être transformées en
-      * erreur d’indisponibilité.
-      */
       if (
         error instanceof AppError
       ) {
         throw error;
       }
 
-      /*
-      * Une erreur technique du service CNI
-      * est enregistrée dans la demande.
-      */
       await this.demandeRepository
         .update(
           id,
@@ -838,6 +1070,9 @@ export class DemandeService {
     }
   }
 
+  /**
+   * Met à jour le statut d’une demande.
+   */
   async updateStatus(
     id: string,
     nouveauStatut: StatutDemande,
@@ -903,10 +1138,9 @@ export class DemandeService {
     }
 
     /*
-    * Une demande ne peut être transmise au
-    * Responsable que si l’identité du demandeur
-    * a été vérifiée par le service CNI.
-    */
+     * L’identité doit être vérifiée avant
+     * la transmission au Responsable.
+     */
     if (
       nouveauStatut ===
         StatutDemande.EN_COURS &&
@@ -917,6 +1151,48 @@ export class DemandeService {
         "La demande ne peut pas être transmise tant que l’identité CNI n’est pas vérifiée.",
         400
       );
+    }
+
+    /*
+     * Le paiement doit être confirmé avant :
+     * - la transmission au Responsable ;
+     * - la validation de la demande ;
+     * - le rejet de la demande.
+     *
+     * Le contrôle sur VALIDEE et REJETEE
+     * protège également les anciennes
+     * demandes qui auraient été transmises
+     * avant l’intégration de la caisse.
+     */
+    const paiementObligatoire =
+      nouveauStatut ===
+        StatutDemande.EN_COURS ||
+      nouveauStatut ===
+        StatutDemande.VALIDEE ||
+      nouveauStatut ===
+        StatutDemande.REJETEE;
+
+    if (paiementObligatoire) {
+      const paiement =
+        await this.paiementRepository
+          .findByDemandeId(id);
+
+      if (!paiement) {
+        throw new AppError(
+          "La demande ne peut pas poursuivre son traitement tant que le paiement n’est pas effectué.",
+          400
+        );
+      }
+
+      if (
+        paiement.statut !==
+        StatutPaiement.PAYE
+      ) {
+        throw new AppError(
+          "La demande ne peut pas poursuivre son traitement car son paiement n’est pas valide.",
+          400
+        );
+      }
     }
 
     const transitionsAutorisees:
@@ -996,6 +1272,9 @@ export class DemandeService {
       });
   }
 
+  /**
+   * Supprime une demande encore modifiable.
+   */
   async delete(
     id: string,
     utilisateurId: string,
@@ -1047,10 +1326,29 @@ export class DemandeService {
       );
     }
 
+    /*
+    * Un paiement et son reçu doivent rester
+    * conservés pour garantir la traçabilité
+    * financière.
+    */
+    const paiementExistant =
+      await this.paiementRepository
+        .findByDemandeId(id);
+
+    if (paiementExistant) {
+      throw new AppError(
+        "Une demande déjà payée ne peut plus être supprimée.",
+        400
+      );
+    }
+
     return this.demandeRepository
       .delete(id);
   }
 
+  /**
+   * Retourne l’historique des statuts.
+   */
   async findHistory(
     id: string,
     utilisateurId: string,
