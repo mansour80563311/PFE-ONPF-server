@@ -12,6 +12,14 @@ import prisma from "../config/prisma";
  * afin que le hash du mot de passe ne soit
  * jamais retourné dans les réponses de l’API.
  */
+const paiementPublicSelect = {
+  id: true,
+  numeroRecu: true,
+  statut: true,
+  montantExigible: true,
+  montantEncaisse: true,
+  datePaiement: true,
+} satisfies Prisma.PaiementSelect;
 const utilisateurPublicSelect = {
   id: true,
   nom: true,
@@ -154,7 +162,13 @@ export class DemandeRepository {
             select:
               utilisateurPublicSelect,
           },
+
+          paiement: {
+            select:
+              paiementPublicSelect,
+          },
         },
+
       }),
 
       prisma.demande.count({
@@ -187,6 +201,11 @@ export class DemandeRepository {
         utilisateur: {
           select:
             utilisateurPublicSelect,
+        },
+
+          paiement: {
+          select:
+            paiementPublicSelect,
         },
 
         journalCloture: {

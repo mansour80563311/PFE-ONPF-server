@@ -8,8 +8,13 @@ import {
 } from "@prisma/client";
 
 import { AppError } from "../errors/AppError";
+
 import { DemandeRepository } from "../repositories/demande.repository";
+
 import { DemandeDocumentRepository } from "../repositories/demande-document.repository";
+
+import { PaiementRepository } from "../repositories/paiement.repository";
+
 import { removeFileIfExists } from "../utils/file";
 
 interface UploadDocumentParams {
@@ -32,7 +37,14 @@ export class DemandeDocumentService {
   private documentRepository =
     new DemandeDocumentRepository();
 
-    /**
+  /*
+   * Permet de vérifier si la demande
+   * possède déjà un paiement.
+   */
+  private paiementRepository =
+    new PaiementRepository();
+
+  /**
    * Contrôle l’accès en lecture aux documents
    * d’une demande.
    *
@@ -78,17 +90,44 @@ export class DemandeDocumentService {
   }
 
   /**
+   * Vérifie que les documents de la demande
+   * peuvent encore être modifiés.
+   *
+   * Après l’enregistrement du paiement,
+   * les documents sont verrouillés afin de
+   * préserver la cohérence du dossier payé.
+   */
+  private async assertDocumentsNotLocked(
+    demandeId: string
+  ): Promise<void> {
+    const paiement =
+      await this.paiementRepository
+        .findByDemandeId(
+          demandeId
+        );
+
+    if (paiement) {
+      throw new AppError(
+        "Les pièces justificatives d’une demande déjà payée ne peuvent plus être modifiées.",
+        400
+      );
+    }
+  }
+
+  /**
    * Ajouter une pièce justificative.
    *
    * ADMIN :
-   * peut ajouter une pièce à une demande EN_ATTENTE.
+   * peut ajouter une pièce à une demande
+   * EN_ATTENTE et non payée.
    *
    * AGENT :
-   * peut ajouter une pièce uniquement à sa propre
-   * demande et uniquement lorsqu’elle est EN_ATTENTE.
+   * peut ajouter une pièce uniquement à sa
+   * propre demande, lorsqu’elle est EN_ATTENTE
+   * et qu’aucun paiement n’a été enregistré.
    *
-   * RESPONSABLE :
-   * ne peut pas ajouter de pièce.
+   * RESPONSABLE et CAISSIER :
+   * ne peuvent pas ajouter de pièce.
    */
   async upload({
     demandeId,
@@ -99,9 +138,10 @@ export class DemandeDocumentService {
   }: UploadDocumentParams) {
     try {
       const demande =
-        await this.demandeRepository.findById(
-          demandeId
-        );
+        await this.demandeRepository
+          .findById(
+            demandeId
+          );
 
       if (!demande) {
         throw new AppError(
@@ -116,9 +156,12 @@ export class DemandeDocumentService {
       const isAgent =
         role === "AGENT";
 
-      if (!isAdmin && !isAgent) {
+      if (
+        !isAdmin &&
+        !isAgent
+      ) {
         throw new AppError(
-          "Seul un agent peut ajouter des documents à une demande.",
+          "Seul un agent ou un administrateur peut ajouter des documents à une demande.",
           403
         );
       }
@@ -144,6 +187,14 @@ export class DemandeDocumentService {
         );
       }
 
+      /*
+       * Dès qu’un paiement existe, le dossier
+       * documentaire devient immuable.
+       */
+      await this.assertDocumentsNotLocked(
+        demandeId
+      );
+
       const existingDocument =
         await this.documentRepository
           .findByDemandeAndType(
@@ -159,8 +210,10 @@ export class DemandeDocumentService {
       }
 
       const isIdentityDocument =
-        type === TypeDocument.CIN ||
-        type === TypeDocument.PASSEPORT;
+        type ===
+          TypeDocument.CIN ||
+        type ===
+          TypeDocument.PASSEPORT;
 
       if (isIdentityDocument) {
         const existingIdentityDocument =
@@ -169,7 +222,9 @@ export class DemandeDocumentService {
               demandeId
             );
 
-        if (existingIdentityDocument) {
+        if (
+          existingIdentityDocument
+        ) {
           throw new AppError(
             "Une pièce d’identité, CIN ou passeport, existe déjà pour cette demande.",
             409
@@ -177,13 +232,14 @@ export class DemandeDocumentService {
         }
       }
 
-      const relativePath = path
-        .relative(
-          process.cwd(),
-          file.path
-        )
-        .split(path.sep)
-        .join("/");
+      const relativePath =
+        path
+          .relative(
+            process.cwd(),
+            file.path
+          )
+          .split(path.sep)
+          .join("/");
 
       return await this.documentRepository
         .create({
@@ -219,8 +275,11 @@ export class DemandeDocumentService {
     } catch (error) {
       /*
        * Multer a déjà enregistré le fichier.
+       *
        * En cas d’erreur métier ou technique,
-       * le fichier physique est supprimé.
+       * y compris lorsque la demande est déjà
+       * payée, le fichier physique temporaire
+       * est supprimé.
        */
       await removeFileIfExists(
         file.path
@@ -241,9 +300,10 @@ export class DemandeDocumentService {
     role: string
   ) {
     const demande =
-      await this.demandeRepository.findById(
-        demandeId
-      );
+      await this.demandeRepository
+        .findById(
+          demandeId
+        );
 
     if (!demande) {
       throw new AppError(
@@ -259,13 +319,15 @@ export class DemandeDocumentService {
     );
 
     const document =
-      await this.documentRepository.findById(
-        documentId
-      );
+      await this.documentRepository
+        .findById(
+          documentId
+        );
 
     if (
       !document ||
-      document.demandeId !== demandeId
+      document.demandeId !==
+        demandeId
     ) {
       throw new AppError(
         "Document introuvable pour cette demande.",
@@ -273,13 +335,16 @@ export class DemandeDocumentService {
       );
     }
 
-    const absolutePath = path.resolve(
-      process.cwd(),
-      document.cheminFichier
-    );
+    const absolutePath =
+      path.resolve(
+        process.cwd(),
+        document.cheminFichier
+      );
 
     try {
-      await fs.access(absolutePath);
+      await fs.access(
+        absolutePath
+      );
     } catch {
       throw new AppError(
         "Le fichier associé à ce document est introuvable sur le serveur.",
@@ -289,8 +354,10 @@ export class DemandeDocumentService {
 
     return {
       absolutePath,
+
       nomOriginal:
         document.nomOriginal,
+
       mimeType:
         document.mimeType,
     };
@@ -306,9 +373,10 @@ export class DemandeDocumentService {
     role: string
   ) {
     const demande =
-      await this.demandeRepository.findById(
-        demandeId
-      );
+      await this.demandeRepository
+        .findById(
+          demandeId
+        );
 
     if (!demande) {
       throw new AppError(
@@ -345,9 +413,10 @@ export class DemandeDocumentService {
     motifNonConformite?: string
   ) {
     const demande =
-      await this.demandeRepository.findById(
-        demandeId
-      );
+      await this.demandeRepository
+        .findById(
+          demandeId
+        );
 
     if (!demande) {
       throw new AppError(
@@ -367,7 +436,7 @@ export class DemandeDocumentService {
       !isResponsable
     ) {
       throw new AppError(
-        "Seul un responsable peut vérifier la conformité des documents.",
+        "Seul un responsable ou un administrateur peut vérifier la conformité des documents.",
         403
       );
     }
@@ -383,13 +452,15 @@ export class DemandeDocumentService {
     }
 
     const document =
-      await this.documentRepository.findById(
-        documentId
-      );
+      await this.documentRepository
+        .findById(
+          documentId
+        );
 
     if (
       !document ||
-      document.demandeId !== demandeId
+      document.demandeId !==
+        demandeId
     ) {
       throw new AppError(
         "Document introuvable pour cette demande.",
@@ -433,7 +504,8 @@ export class DemandeDocumentService {
     if (
       statut ===
         StatutDocument.NON_CONFORME &&
-      motifNonConformite!.trim()
+      motifNonConformite!
+        .trim()
         .length < 5
     ) {
       throw new AppError(
@@ -446,9 +518,11 @@ export class DemandeDocumentService {
       .updateStatus(
         documentId,
         statut,
+
         statut ===
           StatutDocument.NON_CONFORME
-          ? motifNonConformite!.trim()
+          ? motifNonConformite!
+              .trim()
           : null
       );
   }
@@ -458,11 +532,11 @@ export class DemandeDocumentService {
    *
    * ADMIN :
    * peut supprimer une pièce d’une demande
-   * EN_ATTENTE.
+   * EN_ATTENTE et non payée.
    *
    * AGENT :
    * peut supprimer une pièce uniquement sur
-   * sa propre demande EN_ATTENTE.
+   * sa propre demande EN_ATTENTE et non payée.
    */
   async delete(
     demandeId: string,
@@ -471,9 +545,10 @@ export class DemandeDocumentService {
     role: string
   ) {
     const demande =
-      await this.demandeRepository.findById(
-        demandeId
-      );
+      await this.demandeRepository
+        .findById(
+          demandeId
+        );
 
     if (!demande) {
       throw new AppError(
@@ -488,9 +563,12 @@ export class DemandeDocumentService {
     const isAgent =
       role === "AGENT";
 
-    if (!isAdmin && !isAgent) {
+    if (
+      !isAdmin &&
+      !isAgent
+    ) {
       throw new AppError(
-        "Seul un agent peut supprimer les documents d’une demande.",
+        "Seul un agent ou un administrateur peut supprimer les documents d’une demande.",
         403
       );
     }
@@ -516,14 +594,24 @@ export class DemandeDocumentService {
       );
     }
 
+    /*
+     * Empêche la suppression d’une pièce
+     * après l’enregistrement du paiement.
+     */
+    await this.assertDocumentsNotLocked(
+      demandeId
+    );
+
     const document =
-      await this.documentRepository.findById(
-        documentId
-      );
+      await this.documentRepository
+        .findById(
+          documentId
+        );
 
     if (
       !document ||
-      document.demandeId !== demandeId
+      document.demandeId !==
+        demandeId
     ) {
       throw new AppError(
         "Document introuvable pour cette demande.",
@@ -531,21 +619,24 @@ export class DemandeDocumentService {
       );
     }
 
-    const absolutePath = path.resolve(
-      process.cwd(),
-      document.cheminFichier
-    );
+    const absolutePath =
+      path.resolve(
+        process.cwd(),
+        document.cheminFichier
+      );
 
     /*
      * On supprime d’abord l’enregistrement
      * en base de données.
      */
-    await this.documentRepository.delete(
-      documentId
-    );
+    await this.documentRepository
+      .delete(
+        documentId
+      );
 
     /*
      * Puis on supprime le fichier physique.
+     *
      * La fonction ne génère pas d’erreur si
      * le fichier n’existe déjà plus.
      */
