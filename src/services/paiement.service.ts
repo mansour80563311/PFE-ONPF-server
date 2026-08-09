@@ -24,6 +24,10 @@ import type {
   CreatePaiementDto,
 } from "../validations/paiement.validation";
 
+import {
+  JournalCaisseService,
+} from "./journal-caisse.service";
+
 export class PaiementService {
   private static readonly PREFIX_RECU =
     "REC";
@@ -36,6 +40,9 @@ export class PaiementService {
 
   private userRepository =
     new UserRepository();
+
+  private journalCaisseService =
+    new JournalCaisseService();
 
   /**
    * Génère un numéro de reçu unique.
@@ -198,6 +205,19 @@ export class PaiementService {
         409
       );
     }
+        /*
+    * Recherche ou crée automatiquement
+    * le journal ouvert du jour.
+    *
+    * Lorsque le journal est déjà clôturé,
+    * le service bloque l’encaissement.
+    */
+    const journalCaisse =
+      await this
+        .journalCaisseService
+        .getOrCreateJournalDuJour(
+          caissierId
+        );
 
     /*
      * Conversion des montants en Decimal.
@@ -296,6 +316,13 @@ export class PaiementService {
             connect: {
               id:
                 caissierId,
+            },
+          },
+
+          journalCaisse: {
+            connect: {
+              id: 
+                journalCaisse.id,
             },
           },
         });

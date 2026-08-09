@@ -38,6 +38,9 @@ model Utilisateur {
   journauxCloture     JournalCloture[]
   paiementsEncaisses  Paiement[]
 
+  // Journaux appartenant au Caissier.
+  journauxCaisse JournalCaisse[] @relation("JournalCaisseCaissier")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -84,41 +87,34 @@ enum StatutPaiement {
   REMBOURSE
 }
 
+enum StatutJournalCaisse {
+  OUVERT
+  CLOTURE
+}
+
 model Demande {
   id     String @id @default(uuid())
   numero String @unique
 
-  /**
-   * Informations du demandeur.
-   */
+  // Informations du demandeur.
   nomDemandeur    String
   prenomDemandeur String
   cin             String
   telephone       String
   email           String?
 
-  /**
-   * Informations éventuellement retournées
-   * par le Web Service CNI.
-   */
+  // Informations retournées par le service CNI.
   dateNaissanceDemandeur DateTime? @db.Date
   adresseDemandeur       String?
 
-  /**
-   * Informations de traçabilité de la
-   * vérification d’identité.
-   */
+  // Traçabilité de la vérification CNI.
   statutVerificationCni    StatutVerificationCni @default(NON_VERIFIEE)
   dateVerificationCni      DateTime?
   sourceVerificationCni    String?
   referenceVerificationCni String?
   messageVerificationCni   String?
 
-  /**
-   * Paramètres du certificat et calcul tarifaire.
-   * Les montants sont enregistrés avec trois
-   * décimales, conformément au dinar tunisien.
-   */
+  // Paramètres et tarification du certificat.
   nombreExemplaires  Int              @default(1)
   langueCertificat   LangueCertificat @default(FRANCAIS)
   traductionDemandee Boolean          @default(false)
@@ -127,28 +123,20 @@ model Demande {
   supplementTraduction Decimal @default(0.000) @db.Decimal(10, 3)
   montantTotal         Decimal @default(30.000) @db.Decimal(10, 3)
 
-  /**
-   * Informations foncières.
-   */
+  // Informations foncières.
   referenceFonciere String
   adresseBien       String
 
-  /**
-   * Cycle de traitement.
-   */
+  // Cycle de traitement.
   statut       StatutDemande @default(EN_ATTENTE)
   observations String?
   motifRejet   String?
 
-  /**
-   * Journal de clôture.
-   */
+  // Journal de clôture des demandes.
   journalClotureId String?
   journalCloture   JournalCloture? @relation(fields: [journalClotureId], references: [id])
 
-  /**
-   * Agent ayant créé la demande.
-   */
+  // Agent ayant créé la demande.
   utilisateurId String
   utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id])
 
@@ -176,7 +164,8 @@ model HistoriqueStatutDemande {
 
   utilisateurId String
   utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id])
-  createdAt     DateTime    @default(now())
+
+  createdAt DateTime @default(now())
 
   @@index([demandeId])
   @@index([utilisateurId])
@@ -230,29 +219,52 @@ model JournalCloture {
   @@index([responsableId])
 }
 
+model JournalCaisse {
+  id     String @id @default(uuid())
+  numero String @unique
+
+  // Journée de travail concernée.
+  dateJour DateTime @db.Date
+
+  // Le journal reste ouvert pendant les encaissements.
+  statut StatutJournalCaisse @default(OUVERT)
+
+  // Renseignée au moment de la clôture.
+  dateCloture DateTime?
+
+  observations String?
+
+  // Caissier propriétaire du journal.
+  caissierId String
+  caissier   Utilisateur @relation("JournalCaisseCaissier", fields: [caissierId], references: [id], onDelete: Restrict)
+
+  // Paiements enregistrés dans ce journal.
+  paiements Paiement[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Un seul journal par Caissier et par journée.
+  @@unique([caissierId, dateJour])
+  @@index([caissierId])
+  @@index([dateJour])
+  @@index([statut])
+}
+
 model Paiement {
   id         String @id @default(uuid())
   numeroRecu String @unique
 
-  /**
-   * Montant calculé par le backend.
-   */
+  // Montant calculé par le backend.
   montantExigible Decimal @db.Decimal(10, 3)
 
-  /**
-   * Somme remise physiquement par le citoyen.
-   */
+  // Somme remise par le citoyen.
   montantRemis Decimal @db.Decimal(10, 3)
 
-  /**
-   * Monnaie rendue au citoyen.
-   */
+  // Monnaie rendue au citoyen.
   monnaieRendue Decimal @default(0.000) @db.Decimal(10, 3)
 
-  /**
-   * Montant réellement conservé par la caisse.
-   * Il doit correspondre au montant exigible.
-   */
+  // Montant conservé par la caisse.
   montantEncaisse Decimal @db.Decimal(10, 3)
 
   modePaiement ModePaiement   @default(ESPECES)
@@ -263,22 +275,23 @@ model Paiement {
 
   datePaiement DateTime @default(now())
 
-  /**
-   * Une demande ne peut avoir qu’un seul
-   * paiement.
-   */
+  // Une demande ne peut avoir qu’un paiement.
   demandeId String  @unique
   demande   Demande @relation(fields: [demandeId], references: [id], onDelete: Restrict)
 
-  /**
-   * Utilisateur ayant réalisé l’encaissement.
-   */
+  // Utilisateur ayant réalisé l’encaissement.
   caissierId String
   caissier   Utilisateur @relation(fields: [caissierId], references: [id], onDelete: Restrict)
+
+  // Journal de caisse auquel appartient le paiement.
+  // Facultatif pour conserver les anciens paiements.
+  journalCaisseId String?
+  journalCaisse   JournalCaisse? @relation(fields: [journalCaisseId], references: [id], onDelete: Restrict)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([caissierId])
+  @@index([journalCaisseId])
   @@index([datePaiement])
 }

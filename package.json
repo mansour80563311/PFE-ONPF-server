@@ -25,6 +25,7 @@
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.2.0",
+    "pdfkit": "^0.19.1",
     "prisma": "^6.19.3",
     "zod": "^4.4.3"
   },
@@ -35,6 +36,7 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/multer": "^2.2.0",
     "@types/node": "^26.0.1",
+    "@types/pdfkit": "^0.17.6",
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
     "tsx": "^4.23.1",

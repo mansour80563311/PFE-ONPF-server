@@ -9,6 +9,7 @@ import paiementRoutes from "./routes/paiement.routes";
 import journalClotureRoutes from "./routes/journal-cloture.routes";
 import dashboardRoutes from "./routes/dashboard.routes";
 import cniRoutes from "./routes/cni.routes";
+import journalCaisseRoutes from "./routes/journal-caisse.routes";
 
 import {
   errorMiddleware,
@@ -74,6 +75,11 @@ app.use(
 );
 
 app.use(
+  "/api/journaux-caisse",
+  journalCaisseRoutes
+);
+
+app.use(
   "/api/journaux-cloture",
   journalClotureRoutes
 );
@@ -87,6 +93,7 @@ app.use(
   "/api/cni",
   cniRoutes
 );
+
 
 /*
  * Le middleware global d’erreur doit rester
