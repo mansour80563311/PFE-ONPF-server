@@ -10,6 +10,8 @@ import journalClotureRoutes from "./routes/journal-cloture.routes";
 import dashboardRoutes from "./routes/dashboard.routes";
 import cniRoutes from "./routes/cni.routes";
 import journalCaisseRoutes from "./routes/journal-caisse.routes";
+import referentielRoutes from "./routes/referentiel.routes";
+import tarificationRoutes from "./routes/tarification.routes";
 
 import {
   errorMiddleware,
@@ -94,6 +96,15 @@ app.use(
   cniRoutes
 );
 
+app.use(
+  "/api/referentiels",
+  referentielRoutes
+);
+
+app.use(
+  "/api/tarification",
+  tarificationRoutes
+);
 
 /*
  * Le middleware global d’erreur doit rester

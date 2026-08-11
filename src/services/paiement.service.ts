@@ -3,6 +3,7 @@ import {
   Prisma,
   StatutDemande,
   StatutPaiement,
+  StatutTarification,
   StatutVerificationCni,
 } from "@prisma/client";
 
@@ -28,6 +29,7 @@ import {
   JournalCaisseService,
 } from "./journal-caisse.service";
 
+
 export class PaiementService {
   private static readonly PREFIX_RECU =
     "REC";
@@ -44,10 +46,14 @@ export class PaiementService {
   private journalCaisseService =
     new JournalCaisseService();
 
+
   /**
-   * Génère un numéro de reçu unique.
+   * ========================================================
+   * GENERATION DU NUMERO DE RECU
+   * ========================================================
    *
    * Exemple :
+   *
    * REC-2026-000001
    */
   private async generateNumeroRecu():
@@ -55,33 +61,33 @@ export class PaiementService {
     const year =
       new Date().getFullYear();
 
+
     const lastPaiement =
       await this.paiementRepository
-        .findLastNumeroRecu(year);
+        .findLastNumeroRecu(
+          year
+        );
+
 
     if (!lastPaiement) {
       return `${PaiementService.PREFIX_RECU}-${year}-000001`;
     }
 
+
     const expression =
       /^REC-\d{4}-(\d{6})$/;
 
+
     const match =
       lastPaiement.numeroRecu
-        .match(expression);
+        .match(
+          expression
+        );
 
-    if (!match || !match[1]) {
-      throw new AppError(
-        "Le dernier numéro de reçu est invalide.",
-        500
-      );
-    }
-
-    const lastNumber =
-      Number(match[1]);
 
     if (
-      Number.isNaN(lastNumber)
+      !match ||
+      !match[1]
     ) {
       throw new AppError(
         "Le dernier numéro de reçu est invalide.",
@@ -89,17 +95,42 @@ export class PaiementService {
       );
     }
 
+
+    const lastNumber =
+      Number(
+        match[1]
+      );
+
+
+    if (
+      Number.isNaN(
+        lastNumber
+      )
+    ) {
+      throw new AppError(
+        "Le dernier numéro de reçu est invalide.",
+        500
+      );
+    }
+
+
     const nextNumber =
       String(
         lastNumber + 1
-      ).padStart(6, "0");
+      ).padStart(
+        6,
+        "0"
+      );
+
 
     return `${PaiementService.PREFIX_RECU}-${year}-${nextNumber}`;
   }
 
+
   /**
-   * Enregistre le paiement total
-   * d’une demande.
+   * ========================================================
+   * CREATION DU PAIEMENT
+   * ========================================================
    */
   async create(
     demandeId: string,
@@ -107,9 +138,10 @@ export class PaiementService {
     caissierId: string,
     role: string
   ) {
-    /*
-     * Seul le Caissier ou l’Administrateur
-     * peut enregistrer un paiement.
+    /**
+     * ------------------------------------------------------
+     * AUTORISATION
+     * ------------------------------------------------------
      */
     if (
       role !== "CAISSIER" &&
@@ -121,15 +153,18 @@ export class PaiementService {
       );
     }
 
-    /*
-     * Vérification de l’utilisateur qui
-     * réalise l’encaissement.
+
+    /**
+     * ------------------------------------------------------
+     * CAISSIER
+     * ------------------------------------------------------
      */
     const caissier =
       await this.userRepository
         .findById(
           caissierId
         );
+
 
     if (!caissier) {
       throw new AppError(
@@ -138,6 +173,7 @@ export class PaiementService {
       );
     }
 
+
     if (!caissier.statut) {
       throw new AppError(
         "Le compte du caissier est désactivé.",
@@ -145,14 +181,18 @@ export class PaiementService {
       );
     }
 
-    /*
-     * Vérification de la demande.
+
+    /**
+     * ------------------------------------------------------
+     * DEMANDE
+     * ------------------------------------------------------
      */
     const demande =
       await this.demandeRepository
         .findById(
           demandeId
         );
+
 
     if (!demande) {
       throw new AppError(
@@ -161,9 +201,10 @@ export class PaiementService {
       );
     }
 
-    /*
-     * Le paiement intervient avant la
-     * transmission au Responsable.
+
+    /**
+     * Le paiement intervient avant
+     * la transmission au Responsable.
      */
     if (
       demande.statut !==
@@ -175,9 +216,10 @@ export class PaiementService {
       );
     }
 
-    /*
-     * L’identité doit être vérifiée avant
-     * l’encaissement.
+
+    /**
+     * L'identité doit être vérifiée
+     * avant l'encaissement.
      */
     if (
       demande.statutVerificationCni !==
@@ -189,8 +231,13 @@ export class PaiementService {
       );
     }
 
-    /*
-     * Une demande ne peut avoir qu’un seul
+
+    /**
+     * ------------------------------------------------------
+     * PAIEMENT EXISTANT
+     * ------------------------------------------------------
+     *
+     * Une demande ne peut avoir qu'un seul
      * paiement.
      */
     const existingPaiement =
@@ -199,19 +246,72 @@ export class PaiementService {
           demandeId
         );
 
+
     if (existingPaiement) {
       throw new AppError(
         "Cette demande a déjà été payée.",
         409
       );
     }
-        /*
-    * Recherche ou crée automatiquement
-    * le journal ouvert du jour.
-    *
-    * Lorsque le journal est déjà clôturé,
-    * le service bloque l’encaissement.
-    */
+
+
+    /**
+     * ======================================================
+     * VALIDATION DE LA TARIFICATION
+     * ======================================================
+     *
+     * Pour les nouvelles demandes :
+     *
+     * TarificationDemande devient la source
+     * de vérité du montant exigible.
+     *
+     * Les anciennes demandes, pour lesquelles
+     * nature = null, continuent temporairement
+     * à utiliser Demande.montantTotal.
+     */
+    if (
+      demande.nature !== null
+    ) {
+      if (!demande.tarification) {
+        throw new AppError(
+          "La demande ne possède aucune tarification réglementaire calculée.",
+          500
+        );
+      }
+
+
+      /**
+       * Une tarification déjà FIGEE ne devrait
+       * normalement jamais exister sans paiement.
+       *
+       * Si cela arrive, on bloque l'encaissement
+       * afin de protéger l'intégrité des données.
+       */
+      if (
+        demande.tarification
+          .statut !==
+        StatutTarification.CALCULEE
+      ) {
+        throw new AppError(
+          "La tarification de cette demande est déjà figée et ne peut pas faire l’objet d’un nouvel encaissement.",
+          409
+        );
+      }
+    }
+
+
+    /**
+     * ------------------------------------------------------
+     * JOURNAL DE CAISSE
+     * ------------------------------------------------------
+     *
+     * Recherche ou crée automatiquement
+     * le journal ouvert du jour.
+     *
+     * Si le journal a déjà été clôturé,
+     * JournalCaisseService bloque
+     * l'encaissement.
+     */
     const journalCaisse =
       await this
         .journalCaisseService
@@ -219,25 +319,43 @@ export class PaiementService {
           caissierId
         );
 
-    /*
-     * Conversion des montants en Decimal.
+
+    /**
+     * ======================================================
+     * MONTANT EXIGIBLE
+     * ======================================================
      *
-     * Cela évite les imprécisions des
-     * nombres JavaScript.
+     * Nouvelle demande :
+     *
+     * TarificationDemande.montantTotal
+     *
+     * Ancienne demande :
+     *
+     * Demande.montantTotal
      */
+    const montantSource =
+      demande.tarification
+        ?.montantTotal ??
+      demande.montantTotal;
+
+
     const montantExigible =
       new Prisma.Decimal(
-        demande.montantTotal
+        montantSource
           .toString()
       );
+
 
     const montantRemis =
       new Prisma.Decimal(
         data.montantRemis
       );
 
-    /*
-     * Le paiement partiel est interdit.
+
+    /**
+     * ------------------------------------------------------
+     * PAIEMENT PARTIEL INTERDIT
+     * ------------------------------------------------------
      */
     if (
       montantRemis.lessThan(
@@ -252,91 +370,132 @@ export class PaiementService {
       );
     }
 
-    /*
-     * Le montant encaissé correspond
-     * toujours au montant exigible.
-     *
-     * La différence est rendue au citoyen.
+
+    /**
+     * Le montant encaissé est exactement
+     * le montant exigible.
      */
     const montantEncaisse =
       montantExigible;
 
+
+    /**
+     * La différence est rendue
+     * au citoyen.
+     */
     const monnaieRendue =
       montantRemis.minus(
         montantExigible
       );
 
-    /*
-     * Génération du numéro de reçu seulement
-     * après validation des règles métier.
+
+    /**
+     * ------------------------------------------------------
+     * NUMERO DE RECU
+     * ------------------------------------------------------
      */
     const numeroRecu =
       await this.generateNumeroRecu();
 
+
+    /**
+     * Une même date est utilisée pour :
+     *
+     * - le paiement ;
+     * - le figage de la tarification.
+     *
+     * Cela permet une traçabilité exacte.
+     */
+    const datePaiement =
+      new Date();
+
+
     try {
+      /**
+       * ====================================================
+       * TRANSACTION
+       * ====================================================
+       *
+       * La création du paiement et le passage
+       * CALCULEE -> FIGEE sont atomiques.
+       */
       return await this
         .paiementRepository
-        .create({
-          numeroRecu,
-
-          montantExigible,
-
-          montantRemis,
-
-          monnaieRendue,
-
-          montantEncaisse,
-
-          modePaiement:
-            ModePaiement.ESPECES,
-
-          statut:
-            StatutPaiement.PAYE,
-
-          /*
-           * La conversion du montant en lettres
-           * sera ajoutée lors de la génération
-           * du reçu.
-           */
-          montantEnLettres:
+        .createAndFreezeTarification({
+          tarificationId:
+            demande.tarification
+              ?.id ??
             null,
 
-          observations:
-            data.observations ||
-            null,
+          dateFigeage:
+            datePaiement,
 
-          demande: {
-            connect: {
-              id:
-                demandeId,
+          data: {
+            numeroRecu,
+
+            montantExigible,
+
+            montantRemis,
+
+            monnaieRendue,
+
+            montantEncaisse,
+
+            modePaiement:
+              ModePaiement.ESPECES,
+
+            statut:
+              StatutPaiement.PAYE,
+
+            datePaiement,
+
+            /**
+             * La conversion du montant en
+             * lettres reste gérée par le
+             * module du reçu.
+             */
+            montantEnLettres:
+              null,
+
+            observations:
+              data.observations ||
+              null,
+
+            demande: {
+              connect: {
+                id:
+                  demandeId,
+              },
             },
-          },
 
-          caissier: {
-            connect: {
-              id:
-                caissierId,
+            caissier: {
+              connect: {
+                id:
+                  caissierId,
+              },
             },
-          },
 
-          journalCaisse: {
-            connect: {
-              id: 
-                journalCaisse.id,
+            journalCaisse: {
+              connect: {
+                id:
+                  journalCaisse.id,
+              },
             },
           },
         });
     } catch (error) {
-      /*
-       * Protection contre la création
-       * simultanée de deux reçus identiques
-       * ou de deux paiements pour la même
-       * demande.
+      /**
+       * Protection contre :
+       *
+       * - deux reçus identiques ;
+       * - deux paiements simultanés pour
+       *   la même demande.
        */
       if (
         error instanceof
           Prisma.PrismaClientKnownRequestError &&
-        error.code === "P2002"
+        error.code ===
+          "P2002"
       ) {
         throw new AppError(
           "Le paiement n’a pas pu être enregistré car un reçu ou un paiement identique existe déjà.",
@@ -344,12 +503,16 @@ export class PaiementService {
         );
       }
 
+
       throw error;
     }
   }
 
+
   /**
-   * Consulte le paiement d’une demande.
+   * ========================================================
+   * CONSULTATION DU PAIEMENT D'UNE DEMANDE
+   * ========================================================
    */
   async findByDemandeId(
     demandeId: string,
@@ -362,6 +525,7 @@ export class PaiementService {
           demandeId
         );
 
+
     if (!demande) {
       throw new AppError(
         "Demande introuvable.",
@@ -369,8 +533,9 @@ export class PaiementService {
       );
     }
 
-    /*
-     * L’Agent ne peut consulter que le
+
+    /**
+     * L'Agent ne peut consulter que le
      * paiement de ses propres demandes.
      */
     if (
@@ -384,12 +549,14 @@ export class PaiementService {
       );
     }
 
+
     const rolesAutorises = [
       "ADMIN",
       "CAISSIER",
       "AGENT",
       "RESPONSABLE",
     ];
+
 
     if (
       !rolesAutorises.includes(
@@ -402,10 +569,10 @@ export class PaiementService {
       );
     }
 
-    /*
+
+    /**
      * Le Responsable ne peut pas consulter
-     * une demande encore conservée chez
-     * l’Agent.
+     * une demande encore chez l'Agent.
      */
     if (
       role === "RESPONSABLE" &&
@@ -418,11 +585,13 @@ export class PaiementService {
       );
     }
 
+
     const paiement =
       await this.paiementRepository
         .findByDemandeId(
           demandeId
         );
+
 
     if (!paiement) {
       throw new AppError(
@@ -431,11 +600,15 @@ export class PaiementService {
       );
     }
 
+
     return paiement;
   }
 
+
   /**
-   * Consulte un paiement par son identifiant.
+   * ========================================================
+   * CONSULTATION DIRECTE D'UN PAIEMENT
+   * ========================================================
    */
   async findById(
     paiementId: string,
@@ -451,11 +624,13 @@ export class PaiementService {
       );
     }
 
+
     const paiement =
       await this.paiementRepository
         .findById(
           paiementId
         );
+
 
     if (!paiement) {
       throw new AppError(
@@ -463,6 +638,7 @@ export class PaiementService {
         404
       );
     }
+
 
     return paiement;
   }

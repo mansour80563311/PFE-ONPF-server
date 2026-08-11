@@ -7,6 +7,10 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ============================================================
+// UTILISATEURS ET ROLES
+// ============================================================
+
 model Role {
   id          String  @id @default(uuid())
   nom         String  @unique
@@ -38,12 +42,15 @@ model Utilisateur {
   journauxCloture     JournalCloture[]
   paiementsEncaisses  Paiement[]
 
-  // Journaux appartenant au Caissier.
   journauxCaisse JournalCaisse[] @relation("JournalCaisseCaissier")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
+
+// ============================================================
+// ENUMERATIONS EXISTANTES
+// ============================================================
 
 enum StatutDemande {
   EN_ATTENTE
@@ -92,6 +99,239 @@ enum StatutJournalCaisse {
   CLOTURE
 }
 
+// ============================================================
+// NOUVELLES ENUMERATIONS
+// ============================================================
+
+enum NatureDemande {
+  INSCRIPTION
+  PRESTATION
+}
+
+enum CategorieOperationFonciere {
+  STANDARD
+  DISTRACTION
+}
+
+enum StatutTarification {
+  CALCULEE
+  FIGEE
+}
+
+enum TypeLigneTarification {
+  ARCHIVAGE_DOSSIER
+  ETUDE_OPERATION
+  BASE_PRESTATION
+  TARIFICATION_PAGE
+  SUPPLEMENT_FRANCAIS
+  AUTRE
+}
+
+// ============================================================
+// GOUVERNORATS
+// ============================================================
+
+model Gouvernorat {
+  id   String @id @default(uuid())
+  code String @unique
+  nom  String @unique
+
+  actif Boolean @default(true)
+
+  titresFonciers TitreFoncier[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ============================================================
+// TITRES FONCIERS
+// ============================================================
+
+model TitreFoncier {
+  id String @id @default(uuid())
+
+  // Le numéro seul n'est pas unique.
+  numero String
+
+  gouvernoratId String
+  gouvernorat   Gouvernorat @relation(fields: [gouvernoratId], references: [id], onDelete: Restrict)
+
+  // Plusieurs demandes peuvent concerner le même titre.
+  demandes Demande[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Identification métier :
+  // numéro du titre + gouvernorat.
+  @@unique([numero, gouvernoratId])
+  @@index([numero])
+  @@index([gouvernoratId])
+}
+
+// ============================================================
+// TYPES D'OPERATIONS FONCIERES
+// ============================================================
+
+model TypeOperationFonciere {
+  id String @id @default(uuid())
+
+  // Exemples :
+  // VENTE
+  // HYPOTHEQUE
+  // DONATION
+  // SUCCESSION
+  // RADIATION
+  // MAINLEVEE
+  // ECHANGE
+  // PARTAGE
+  // DISTRACTION
+  code String @unique
+
+  libelle     String
+  description String?
+
+  categorie CategorieOperationFonciere
+
+  actif Boolean @default(true)
+
+  demandes DemandeOperationFonciere[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([categorie])
+  @@index([actif])
+}
+
+// ============================================================
+// OPERATIONS FONCIERES D'UNE DEMANDE
+// ============================================================
+
+model DemandeOperationFonciere {
+  id String @id @default(uuid())
+
+  demandeId String
+  demande   Demande @relation(fields: [demandeId], references: [id], onDelete: Cascade)
+
+  typeOperationFonciereId String
+  typeOperationFonciere   TypeOperationFonciere @relation(fields: [typeOperationFonciereId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+
+  @@unique([demandeId, typeOperationFonciereId])
+  @@index([demandeId])
+  @@index([typeOperationFonciereId])
+}
+
+// ============================================================
+// TARIFS DES OPERATIONS FONCIERES
+// ============================================================
+
+model TarifOperationFonciere {
+  id String @id @default(uuid())
+
+  categorie CategorieOperationFonciere
+
+  montantEtude Decimal @db.Decimal(10, 3)
+
+  dateDebutValidite DateTime  @db.Date
+  dateFinValidite   DateTime? @db.Date
+
+  referenceReglementaire String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([categorie])
+  @@index([categorie, dateDebutValidite])
+}
+
+// ============================================================
+// TARIF GENERAL D'UNE INSCRIPTION
+// ============================================================
+
+model TarifInscription {
+  id String @id @default(uuid())
+
+  montantArchivage Decimal @db.Decimal(10, 3)
+
+  dateDebutValidite DateTime  @db.Date
+  dateFinValidite   DateTime? @db.Date
+
+  referenceReglementaire String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([dateDebutValidite])
+}
+
+// ============================================================
+// PRESTATIONS
+// ============================================================
+
+model Prestation {
+  id String @id @default(uuid())
+
+  code String @unique
+
+  libelle     String
+  description String?
+
+  // Indique si le nombre de pages intervient dans le calcul.
+  tarificationParPage Boolean @default(false)
+
+  // Indique si le supplément français est applicable.
+  supplementFrancaisApplicable Boolean @default(false)
+
+  // Certaines prestations peuvent ne pas nécessiter de titre.
+  necessiteTitreFoncier Boolean @default(true)
+
+  actif Boolean @default(true)
+
+  tarifs   TarifPrestation[]
+  demandes Demande[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([actif])
+}
+
+// ============================================================
+// TARIFS DES PRESTATIONS
+// ============================================================
+
+model TarifPrestation {
+  id String @id @default(uuid())
+
+  prestationId String
+  prestation   Prestation @relation(fields: [prestationId], references: [id], onDelete: Restrict)
+
+  montantBase Decimal @default(0.000) @db.Decimal(10, 3)
+
+  montantParPage Decimal @default(0.000) @db.Decimal(10, 3)
+
+  supplementFrancais Decimal @default(0.000) @db.Decimal(10, 3)
+
+  dateDebutValidite DateTime  @db.Date
+  dateFinValidite   DateTime? @db.Date
+
+  referenceReglementaire String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([prestationId])
+  @@index([prestationId, dateDebutValidite])
+}
+
+// ============================================================
+// DEMANDES
+// ============================================================
+
 model Demande {
   id     String @id @default(uuid())
   numero String @unique
@@ -107,14 +347,18 @@ model Demande {
   dateNaissanceDemandeur DateTime? @db.Date
   adresseDemandeur       String?
 
-  // Traçabilité de la vérification CNI.
+  // Vérification CNI.
   statutVerificationCni    StatutVerificationCni @default(NON_VERIFIEE)
   dateVerificationCni      DateTime?
   sourceVerificationCni    String?
   referenceVerificationCni String?
   messageVerificationCni   String?
 
-  // Paramètres et tarification du certificat.
+  // ========================================================
+  // ANCIENNE TARIFICATION
+  // Conservée temporairement.
+  // ========================================================
+
   nombreExemplaires  Int              @default(1)
   langueCertificat   LangueCertificat @default(FRANCAIS)
   traductionDemandee Boolean          @default(false)
@@ -123,16 +367,42 @@ model Demande {
   supplementTraduction Decimal @default(0.000) @db.Decimal(10, 3)
   montantTotal         Decimal @default(30.000) @db.Decimal(10, 3)
 
-  // Informations foncières.
+  // ========================================================
+  // ANCIENNES INFORMATIONS FONCIERES
+  // Conservées temporairement.
+  // ========================================================
+
   referenceFonciere String
   adresseBien       String
+
+  // ========================================================
+  // NOUVELLE STRUCTURE METIER
+  // ========================================================
+
+  nature NatureDemande?
+
+  titreFoncierId String?
+  titreFoncier   TitreFoncier? @relation(fields: [titreFoncierId], references: [id], onDelete: Restrict)
+
+  // Utilisé pour les demandes de type PRESTATION.
+  prestationId String?
+  prestation   Prestation? @relation(fields: [prestationId], references: [id], onDelete: Restrict)
+
+  // Utilisé seulement si la prestation est tarifée par page.
+  nombrePages Int?
+
+  // Une demande peut contenir plusieurs opérations foncières.
+  operationsFoncieres DemandeOperationFonciere[]
+
+  // Nouveau calcul tarifaire détaillé.
+  tarification TarificationDemande?
 
   // Cycle de traitement.
   statut       StatutDemande @default(EN_ATTENTE)
   observations String?
   motifRejet   String?
 
-  // Journal de clôture des demandes.
+  // Journal de clôture.
   journalClotureId String?
   journalCloture   JournalCloture? @relation(fields: [journalClotureId], references: [id])
 
@@ -147,11 +417,86 @@ model Demande {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([cin, referenceFonciere])
+  // Ancienne contrainte conservée temporairement.
+  @@index([referenceFonciere])
   @@index([journalClotureId])
   @@index([cin])
   @@index([statutVerificationCni])
+  @@index([nature])
+  @@index([titreFoncierId])
+  @@index([prestationId])
 }
+
+// ============================================================
+// TARIFICATION CALCULEE D'UNE DEMANDE
+// ============================================================
+
+model TarificationDemande {
+  id String @id @default(uuid())
+
+  demandeId String  @unique
+  demande   Demande @relation(fields: [demandeId], references: [id], onDelete: Cascade)
+
+  // Snapshot de la nature de la demande.
+  nature NatureDemande
+
+  // Snapshot éventuel de la prestation.
+  prestationCode    String?
+  prestationLibelle String?
+
+  langue      LangueCertificat?
+  nombrePages Int?
+
+  montantTotal Decimal @db.Decimal(10, 3)
+
+  referenceReglementaire String?
+
+  statut StatutTarification @default(CALCULEE)
+
+  dateCalcul  DateTime  @default(now())
+  dateFigeage DateTime?
+
+  lignes LigneTarification[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([statut])
+  @@index([dateCalcul])
+}
+
+// ============================================================
+// LIGNES DE TARIFICATION
+// ============================================================
+
+model LigneTarification {
+  id String @id @default(uuid())
+
+  tarificationId String
+  tarification   TarificationDemande @relation(fields: [tarificationId], references: [id], onDelete: Cascade)
+
+  type TypeLigneTarification
+
+  code String?
+
+  libelle String
+
+  quantite Int @default(1)
+
+  montantUnitaire Decimal @db.Decimal(10, 3)
+  montant         Decimal @db.Decimal(10, 3)
+
+  ordre Int @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@index([tarificationId])
+  @@index([type])
+}
+
+// ============================================================
+// HISTORIQUE DES STATUTS
+// ============================================================
 
 model HistoriqueStatutDemande {
   id            String        @id @default(uuid())
@@ -170,6 +515,10 @@ model HistoriqueStatutDemande {
   @@index([demandeId])
   @@index([utilisateurId])
 }
+
+// ============================================================
+// DOCUMENTS
+// ============================================================
 
 model DemandeDocument {
   id String @id @default(uuid())
@@ -199,6 +548,10 @@ model DemandeDocument {
   @@index([utilisateurId])
 }
 
+// ============================================================
+// JOURNAL DE CLOTURE
+// ============================================================
+
 model JournalCloture {
   id     String @id @default(uuid())
   numero String @unique
@@ -219,52 +572,50 @@ model JournalCloture {
   @@index([responsableId])
 }
 
+// ============================================================
+// JOURNAL DE CAISSE
+// ============================================================
+
 model JournalCaisse {
   id     String @id @default(uuid())
   numero String @unique
 
-  // Journée de travail concernée.
   dateJour DateTime @db.Date
 
-  // Le journal reste ouvert pendant les encaissements.
   statut StatutJournalCaisse @default(OUVERT)
 
-  // Renseignée au moment de la clôture.
   dateCloture DateTime?
 
   observations String?
 
-  // Caissier propriétaire du journal.
   caissierId String
   caissier   Utilisateur @relation("JournalCaisseCaissier", fields: [caissierId], references: [id], onDelete: Restrict)
 
-  // Paiements enregistrés dans ce journal.
   paiements Paiement[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // Un seul journal par Caissier et par journée.
   @@unique([caissierId, dateJour])
   @@index([caissierId])
   @@index([dateJour])
   @@index([statut])
 }
 
+// ============================================================
+// PAIEMENTS
+// ============================================================
+
 model Paiement {
   id         String @id @default(uuid())
   numeroRecu String @unique
 
-  // Montant calculé par le backend.
   montantExigible Decimal @db.Decimal(10, 3)
 
-  // Somme remise par le citoyen.
   montantRemis Decimal @db.Decimal(10, 3)
 
-  // Monnaie rendue au citoyen.
   monnaieRendue Decimal @default(0.000) @db.Decimal(10, 3)
 
-  // Montant conservé par la caisse.
   montantEncaisse Decimal @db.Decimal(10, 3)
 
   modePaiement ModePaiement   @default(ESPECES)
@@ -275,16 +626,12 @@ model Paiement {
 
   datePaiement DateTime @default(now())
 
-  // Une demande ne peut avoir qu’un paiement.
   demandeId String  @unique
   demande   Demande @relation(fields: [demandeId], references: [id], onDelete: Restrict)
 
-  // Utilisateur ayant réalisé l’encaissement.
   caissierId String
   caissier   Utilisateur @relation(fields: [caissierId], references: [id], onDelete: Restrict)
 
-  // Journal de caisse auquel appartient le paiement.
-  // Facultatif pour conserver les anciens paiements.
   journalCaisseId String?
   journalCaisse   JournalCaisse? @relation(fields: [journalCaisseId], references: [id], onDelete: Restrict)
 

@@ -1,14 +1,13 @@
 import {
   LangueCertificat,
+  NatureDemande,
+  Prisma,
   StatutDemande,
   StatutDocument,
   StatutPaiement,
+  StatutTarification,
   StatutVerificationCni,
   TypeDocument,
-} from "@prisma/client";
-
-import type {
-  Prisma,
 } from "@prisma/client";
 
 import { AppError } from "../errors/AppError";
@@ -38,6 +37,14 @@ import type {
 import {
   CniService,
 } from "./cni.service";
+
+import {
+  ReferentielService,
+} from "./referentiel.service";
+
+import {
+  TarificationService,
+} from "./tarification.service";
 
 interface DemandeAccessData {
   utilisateurId: string;
@@ -290,172 +297,588 @@ export class DemandeService {
    * Crée une nouvelle demande.
    */
   async create(
-    data: CreateDemandeServiceDto,
-    role: string
-  ) {
-    if (
-      role !== "ADMIN" &&
-      role !== "AGENT"
+      data: CreateDemandeServiceDto,
+      role: string
     ) {
-      throw new AppError(
-        "Seul un agent peut créer une demande.",
-        403
-      );
-    }
-
-    const utilisateur =
-      await this.userRepository
-        .findById(
-          data.utilisateurId
+      /**
+       * ========================================================
+       * AUTORISATION
+       * ========================================================
+       */
+      if (
+        role !== "ADMIN" &&
+        role !== "AGENT"
+      ) {
+        throw new AppError(
+          "Seul un agent peut créer une demande.",
+          403
         );
+      }
 
-    if (!utilisateur) {
-      throw new AppError(
-        "Utilisateur introuvable.",
-        404
-      );
-    }
 
-    const existing =
-      await this.demandeRepository
-        .findByCinAndReference(
-          data.cin,
-          data.referenceFonciere
+      const utilisateur =
+        await this.userRepository
+          .findById(
+            data.utilisateurId
+          );
+
+      if (!utilisateur) {
+        throw new AppError(
+          "Utilisateur introuvable.",
+          404
         );
+      }
 
-    if (existing) {
-      throw new AppError(
-        "Une demande existe déjà pour ce demandeur et cette référence foncière.",
-        409
-      );
-    }
 
-    /*
-     * Le backend vérifie lui-même le CIN.
-     *
-     * Les données d’identité envoyées par
-     * le frontend ne sont pas considérées
-     * comme fiables.
-     */
-    const identite =
-      await this.cniService
-        .verifierIdentite(
-          data.cin
+      /**
+       * ========================================================
+       * VERIFICATION CNI
+       * ========================================================
+       */
+      const identite =
+        await this.cniService
+          .verifierIdentite(
+            data.cin
+          );
+
+      if (!identite) {
+        throw new AppError(
+          "Aucune identité trouvée pour ce numéro CIN.",
+          404
         );
+      }
 
-    if (!identite) {
-      throw new AppError(
-        "Aucune identité trouvée pour ce numéro CIN.",
-        404
-      );
-    }
 
-    /*
-     * Le calcul est réalisé côté serveur.
-     */
-    const tarification =
-      this.calculateTarification(
-        data.nombreExemplaires,
-        data.langueCertificat,
-        data.traductionDemandee
-      );
+      /**
+       * ========================================================
+       * NUMERO DE DEMANDE
+       * ========================================================
+       */
+      const numero =
+        await this.generateNumero();
 
-    const numero =
-      await this.generateNumero();
+      const dateVerificationCni =
+        new Date();
 
-    const dateVerificationCni =
-      new Date();
 
-    return this.demandeRepository
-      .create({
-        numero,
+      /**
+       * Ces variables permettent de construire
+       * les relations communes aux deux natures
+       * de demande.
+       */
+      let titreFoncier:
+        {
+          numero: string;
+          gouvernoratId: string;
+          gouvernoratCode: string;
+        } | null = null;
 
-        /*
-         * Informations officielles retournées
-         * par le service CNI.
+      let prestation:
+        Awaited<
+          ReturnType<
+            typeof ReferentielService.getPrestationById
+          >
+        > = null;
+
+
+      /**
+       * ========================================================
+       * DEMANDE D'INSCRIPTION
+       * ========================================================
+       */
+      if (
+        data.nature ===
+        "INSCRIPTION"
+      ) {
+        const gouvernorat =
+          await ReferentielService
+            .getGouvernoratById(
+              data.gouvernoratId
+            );
+
+        if (!gouvernorat) {
+          throw new AppError(
+            "Gouvernorat introuvable ou inactif.",
+            404
+          );
+        }
+
+        titreFoncier = {
+          numero:
+            data.numeroTitreFoncier
+              .trim(),
+
+          gouvernoratId:
+            gouvernorat.id,
+
+          gouvernoratCode:
+            gouvernorat.code,
+        };
+      }
+
+
+      /**
+       * ========================================================
+       * DEMANDE DE PRESTATION
+       * ========================================================
+       */
+      if (
+        data.nature ===
+        "PRESTATION"
+      ) {
+        prestation =
+          await ReferentielService
+            .getPrestationById(
+              data.prestationId
+            );
+
+        if (!prestation) {
+          throw new AppError(
+            "Prestation introuvable ou inactive.",
+            404
+          );
+        }
+
+
+        /**
+         * Certaines prestations exigent
+         * obligatoirement un titre foncier.
          */
-        nomDemandeur:
-          identite.nom,
+        if (
+          prestation
+            .necessiteTitreFoncier &&
+          (
+            !data.gouvernoratId ||
+            !data.numeroTitreFoncier
+          )
+        ) {
+          throw new AppError(
+            "Le gouvernorat et le numéro du titre foncier sont obligatoires pour cette prestation.",
+            400
+          );
+        }
 
-        prenomDemandeur:
-          identite.prenom,
 
-        cin:
-          identite.cin,
-
-        dateNaissanceDemandeur:
-          identite.dateNaissance,
-
-        adresseDemandeur:
-          identite.adresse,
-
-        statutVerificationCni:
-          StatutVerificationCni.VERIFIEE,
-
-        dateVerificationCni,
-
-        sourceVerificationCni:
-          "SERVICE_CNI_SIMULE",
-
-        referenceVerificationCni:
-          identite.referenceVerification,
-
-        messageVerificationCni:
-          "Identité vérifiée avec succès.",
-
-        /*
-         * Informations tarifaires.
+        /**
+         * Si un titre foncier a été fourni,
+         * nous vérifions le gouvernorat puis
+         * construisons la relation.
          */
-        nombreExemplaires:
-          tarification
-            .nombreExemplaires,
+        if (
+          data.gouvernoratId &&
+          data.numeroTitreFoncier
+        ) {
+          const gouvernorat =
+            await ReferentielService
+              .getGouvernoratById(
+                data.gouvernoratId
+              );
 
-        langueCertificat:
-          tarification
-            .langueCertificat,
+          if (!gouvernorat) {
+            throw new AppError(
+              "Gouvernorat introuvable ou inactif.",
+              404
+            );
+          }
 
-        traductionDemandee:
-          tarification
-            .traductionDemandee,
+          titreFoncier = {
+            numero:
+              data.numeroTitreFoncier
+                .trim(),
 
-        prixUnitaire:
-          tarification
-            .prixUnitaire,
+            gouvernoratId:
+              gouvernorat.id,
 
-        supplementTraduction:
-          tarification
-            .supplementTraduction,
+            gouvernoratCode:
+              gouvernorat.code,
+          };
+        }
+      }
 
-        montantTotal:
-          tarification
-            .montantTotal,
 
-        telephone:
-          data.telephone,
+      /**
+       * ========================================================
+       * CALCUL REGLEMENTAIRE
+       * ========================================================
+       */
+      const tarification =
+        data.nature ===
+        "INSCRIPTION"
+          ? await TarificationService
+              .calculer({
+                nature:
+                  "INSCRIPTION",
 
-        email:
-          data.email || null,
+                operationFonciereIds:
+                  data
+                    .operationFonciereIds,
+              })
+          : await TarificationService
+              .calculer({
+                nature:
+                  "PRESTATION",
 
-        referenceFonciere:
-          data.referenceFonciere,
+                prestationId:
+                  data.prestationId,
 
-        adresseBien:
-          data.adresseBien,
+                nombrePages:
+                  data.nombrePages,
 
-        observations:
-          data.observations || null,
+                langue:
+                  data.langue,
+              });
 
-        statut:
-          StatutDemande.EN_ATTENTE,
 
-        utilisateur: {
-          connect: {
-            id:
-              data.utilisateurId,
+      /**
+       * ========================================================
+       * COMPATIBILITE AVEC L'ANCIEN MODELE
+       * ========================================================
+       *
+       * referenceFonciere est encore obligatoire
+       * dans PostgreSQL.
+       *
+       * Pour une demande possédant un titre,
+       * nous construisons une référence à partir
+       * de :
+       *
+       * numéro + gouvernorat.
+       */
+      const referenceFonciereLegacy =
+        titreFoncier
+          ? `${titreFoncier.numero}/${titreFoncier.gouvernoratCode}`
+          : `SANS_TITRE-${numero}`;
+
+
+      /**
+       * Le nouveau montant est également copié
+       * dans Demande.montantTotal afin que le
+       * module Paiement actuel continue à
+       * fonctionner pendant la migration.
+       */
+      const montantTotal =
+        new Prisma.Decimal(
+          tarification.montantTotal
+        );
+
+
+      /**
+       * Valeur utilisée uniquement pour assurer
+       * temporairement la compatibilité avec
+       * les anciennes interfaces.
+       */
+      const langueCertificatLegacy =
+        data.nature ===
+        "PRESTATION"
+          ? data.langue ===
+            "FRANCAIS"
+            ? LangueCertificat.FRANCAIS
+            : LangueCertificat.ARABE
+          : LangueCertificat.ARABE;
+
+
+      /**
+       * ========================================================
+       * CREATION ATOMIQUE
+       * ========================================================
+       *
+       * Prisma créera en une seule opération :
+       *
+       * - la Demande ;
+       * - le TitreFoncier si nécessaire ;
+       * - les relations avec les opérations ;
+       * - la TarificationDemande ;
+       * - les LigneTarification.
+       */
+      return this.demandeRepository
+        .create({
+          numero,
+
+          /**
+           * Identité officielle issue du
+           * service CNI.
+           */
+          nomDemandeur:
+            identite.nom,
+
+          prenomDemandeur:
+            identite.prenom,
+
+          cin:
+            identite.cin,
+
+          dateNaissanceDemandeur:
+            identite.dateNaissance,
+
+          adresseDemandeur:
+            identite.adresse,
+
+          statutVerificationCni:
+            StatutVerificationCni.VERIFIEE,
+
+          dateVerificationCni,
+
+          sourceVerificationCni:
+            "SERVICE_CNI_SIMULE",
+
+          referenceVerificationCni:
+            identite
+              .referenceVerification,
+
+          messageVerificationCni:
+            "Identité vérifiée avec succès.",
+
+
+          /**
+           * Données de contact.
+           */
+          telephone:
+            data.telephone,
+
+          email:
+            data.email || null,
+
+          adresseBien:
+            data.adresseBien,
+
+          observations:
+            data.observations || null,
+
+
+          /**
+           * Nouvelle nature métier.
+           */
+          nature:
+            data.nature,
+
+
+          /**
+           * ====================================================
+           * ANCIENS CHAMPS CONSERVES TEMPORAIREMENT
+           * ====================================================
+           */
+          referenceFonciere:
+            referenceFonciereLegacy,
+
+          nombreExemplaires:
+            1,
+
+          langueCertificat:
+            langueCertificatLegacy,
+
+          traductionDemandee:
+            false,
+
+          /**
+           * L'ancien prix unitaire ne représente
+           * plus le nouveau modèle réglementaire.
+           *
+           * Nous recopions temporairement le total
+           * afin d'éviter la valeur historique
+           * fixe de 30 DT.
+           */
+          prixUnitaire:
+            montantTotal,
+
+          supplementTraduction:
+            new Prisma.Decimal(
+              0
+            ),
+
+          montantTotal,
+
+
+          /**
+           * ====================================================
+           * TITRE FONCIER
+           * ====================================================
+           */
+          ...(titreFoncier
+            ? {
+                titreFoncier: {
+                  connectOrCreate: {
+                    where: {
+                      numero_gouvernoratId:
+                        {
+                          numero:
+                            titreFoncier.numero,
+
+                          gouvernoratId:
+                            titreFoncier
+                              .gouvernoratId,
+                        },
+                    },
+
+                    create: {
+                      numero:
+                        titreFoncier.numero,
+
+                      gouvernorat: {
+                        connect: {
+                          id:
+                            titreFoncier
+                              .gouvernoratId,
+                        },
+                      },
+                    },
+                  },
+                },
+              }
+            : {}),
+
+
+          /**
+           * ====================================================
+           * PRESTATION
+           * ====================================================
+           */
+          ...(data.nature ===
+              "PRESTATION" &&
+            prestation
+            ? {
+                prestation: {
+                  connect: {
+                    id:
+                      prestation.id,
+                  },
+                },
+
+                nombrePages:
+                  data.nombrePages ??
+                  null,
+              }
+            : {}),
+
+
+          /**
+           * ====================================================
+           * OPERATIONS FONCIERES
+           * ====================================================
+           */
+          ...(data.nature ===
+          "INSCRIPTION"
+            ? {
+                operationsFoncieres: {
+                  create:
+                    data
+                      .operationFonciereIds
+                      .map(
+                        (
+                          typeOperationFonciereId
+                        ) => ({
+                          typeOperationFonciere:
+                            {
+                              connect: {
+                                id:
+                                  typeOperationFonciereId,
+                              },
+                            },
+                        })
+                      ),
+                },
+              }
+            : {}),
+
+
+          /**
+           * ====================================================
+           * SNAPSHOT TARIFAIRE
+           * ====================================================
+           */
+          tarification: {
+            create: {
+              nature:
+                data.nature,
+
+              prestationCode:
+                tarification
+                  .prestation
+                  ?.code ??
+                null,
+
+              prestationLibelle:
+                tarification
+                  .prestation
+                  ?.libelle ??
+                null,
+
+              langue:
+                data.nature ===
+                "PRESTATION"
+                  ? data.langue
+                  : null,
+
+              nombrePages:
+                data.nature ===
+                "PRESTATION"
+                  ? data.nombrePages ??
+                    null
+                  : null,
+
+              montantTotal,
+
+              referenceReglementaire:
+                tarification
+                  .referenceReglementaire,
+
+              lignes: {
+                create:
+                  tarification
+                    .lignes
+                    .map(
+                      (
+                        ligne,
+                        index
+                      ) => ({
+                        type:
+                          ligne.type,
+
+                        code:
+                          ligne.code,
+
+                        libelle:
+                          ligne.libelle,
+
+                        quantite:
+                          ligne.quantite,
+
+                        montantUnitaire:
+                          new Prisma.Decimal(
+                            ligne
+                              .montantUnitaire
+                          ),
+
+                        montant:
+                          new Prisma.Decimal(
+                            ligne.montant
+                          ),
+
+                        ordre:
+                          index + 1,
+                      })
+                    ),
+              },
+            },
           },
-        },
-      });
-  }
+
+
+          /**
+           * Cycle de traitement.
+           */
+          statut:
+            StatutDemande.EN_ATTENTE,
+
+
+          /**
+           * Agent ayant créé la demande.
+           */
+          utilisateur: {
+            connect: {
+              id:
+                data.utilisateurId,
+            },
+          },
+        });
+    }
 
   /**
    * Liste les demandes accessibles à
@@ -538,12 +961,17 @@ export class DemandeService {
   /**
    * Modifie une demande encore autorisée.
    */
-  async update(
+ async update(
     id: string,
     data: UpdateDemandeDto,
     utilisateurId: string,
     role: string
   ) {
+    /**
+     * ========================================================
+     * RECUPERATION DE LA DEMANDE
+     * ========================================================
+     */
     const demande =
       await this.findById(
         id,
@@ -551,11 +979,18 @@ export class DemandeService {
         role
       );
 
+
+    /**
+     * ========================================================
+     * AUTORISATIONS
+     * ========================================================
+     */
     const isAdmin =
       role === "ADMIN";
 
     const isAgent =
       role === "AGENT";
+
 
     if (
       !isAdmin &&
@@ -567,6 +1002,11 @@ export class DemandeService {
       );
     }
 
+
+    /**
+     * Une demande terminée ne peut plus
+     * être modifiée.
+     */
     if (
       demande.statut ===
         StatutDemande.VALIDEE ||
@@ -579,6 +1019,11 @@ export class DemandeService {
       );
     }
 
+
+    /**
+     * Un Agent ne peut modifier que ses
+     * demandes encore en attente.
+     */
     if (
       isAgent &&
       demande.statut !==
@@ -590,14 +1035,16 @@ export class DemandeService {
       );
     }
 
-    /*
-    * Une demande déjà payée ne peut plus être
-    * modifiée afin de préserver la cohérence
-    * entre le reçu et les informations tarifaires.
-    */
+
+    /**
+     * ========================================================
+     * VERROUILLAGE APRES PAIEMENT
+     * ========================================================
+     */
     const paiementExistant =
       await this.paiementRepository
         .findByDemandeId(id);
+
 
     if (paiementExistant) {
       throw new AppError(
@@ -606,6 +1053,16 @@ export class DemandeService {
       );
     }
 
+
+    /**
+     * ========================================================
+     * IDENTITE
+     * ========================================================
+     *
+     * Si le CIN, le nom ou le prénom est
+     * modifié, l'identité est revérifiée
+     * auprès du service CNI.
+     */
     const identityFieldsProvided =
       data.cin !== undefined ||
       data.nomDemandeur !==
@@ -613,18 +1070,17 @@ export class DemandeService {
       data.prenomDemandeur !==
         undefined;
 
+
     const identityUpdate:
       Prisma.DemandeUpdateInput =
         {};
 
-    /*
-     * Lorsqu’un champ d’identité est modifié,
-     * le CIN est revérifié.
-     */
+
     if (identityFieldsProvided) {
       const cinToVerify =
         data.cin ??
         demande.cin;
+
 
       const identite =
         await this.cniService
@@ -632,12 +1088,14 @@ export class DemandeService {
             cinToVerify
           );
 
+
       if (!identite) {
         throw new AppError(
           "Aucune identité trouvée pour ce numéro CIN.",
           404
         );
       }
+
 
       identityUpdate.cin =
         identite.cin;
@@ -669,129 +1127,29 @@ export class DemandeService {
 
       identityUpdate
         .referenceVerificationCni =
-          identite.referenceVerification;
+          identite
+            .referenceVerification;
 
       identityUpdate
         .messageVerificationCni =
           "Identité vérifiée avec succès.";
     }
 
-    const cinFinal =
-      identityFieldsProvided
-        ? data.cin ??
-          demande.cin
-        : demande.cin;
 
-    const referenceFinal =
-      data.referenceFonciere ??
-      demande.referenceFonciere;
-
-    /*
-     * Vérification de l’unicité du CIN
-     * et de la référence foncière.
+    /**
+     * ========================================================
+     * CHAMPS COMMUNS
+     * ========================================================
      */
-    if (
-      data.cin !== undefined ||
-      data.referenceFonciere !==
-        undefined
-    ) {
-      const existing =
-        await this.demandeRepository
-          .findByCinAndReference(
-            cinFinal,
-            referenceFinal
-          );
-
-      if (
-        existing &&
-        existing.id !== id
-      ) {
-        throw new AppError(
-          "Une demande existe déjà pour ce demandeur et cette référence foncière.",
-          409
-        );
-      }
-    }
-
-    /*
-     * Le montant est recalculé lorsqu’un
-     * paramètre tarifaire est modifié.
-     */
-    const tarificationFieldsProvided =
-      data.nombreExemplaires !==
-        undefined ||
-      data.langueCertificat !==
-        undefined ||
-      data.traductionDemandee !==
-        undefined;
-
-    const tarificationUpdate =
-      tarificationFieldsProvided
-        ? this.calculateTarification(
-            data.nombreExemplaires ??
-              demande
-                .nombreExemplaires,
-
-            data.langueCertificat ??
-              demande
-                .langueCertificat,
-
-            data.traductionDemandee ??
-              demande
-                .traductionDemandee
-          )
-        : null;
-
-    return this.demandeRepository
-      .update(
-        id,
+    const commonUpdate:
+      Prisma.DemandeUpdateInput =
         {
           ...identityUpdate,
-
-          ...(tarificationUpdate
-            ? {
-                nombreExemplaires:
-                  tarificationUpdate
-                    .nombreExemplaires,
-
-                langueCertificat:
-                  tarificationUpdate
-                    .langueCertificat,
-
-                traductionDemandee:
-                  tarificationUpdate
-                    .traductionDemandee,
-
-                prixUnitaire:
-                  tarificationUpdate
-                    .prixUnitaire,
-
-                supplementTraduction:
-                  tarificationUpdate
-                    .supplementTraduction,
-
-                montantTotal:
-                  tarificationUpdate
-                    .montantTotal,
-              }
-            : {}),
 
           ...(data.telephone !==
             undefined && {
             telephone:
               data.telephone,
-          }),
-
-          ...(data.referenceFonciere !==
-            undefined && {
-            referenceFonciere:
-              data.referenceFonciere,
-          }),
-
-          ...(data.adresseBien !==
-            undefined && {
-            adresseBien:
-              data.adresseBien,
           }),
 
           ...(data.email !==
@@ -800,14 +1158,1077 @@ export class DemandeService {
               data.email || null,
           }),
 
+          ...(data.adresseBien !==
+            undefined && {
+            adresseBien:
+              data.adresseBien,
+          }),
+
           ...(data.observations !==
             undefined && {
             observations:
               data.observations ||
               null,
           }),
-        }
+        };
+
+
+    /**
+     * ========================================================
+     * ANCIENNES DEMANDES
+     * ========================================================
+     *
+     * Les demandes créées avant la nouvelle
+     * architecture possèdent :
+     *
+     * nature = null
+     *
+     * Elles continuent temporairement à
+     * utiliser l'ancien système.
+     */
+    if (demande.nature === null) {
+      /**
+       * Une ancienne demande ne peut pas
+       * recevoir les nouveaux paramètres
+       * métier par une simple modification.
+       */
+      const nouveauxChampsFournis =
+        data.gouvernoratId !==
+          undefined ||
+        data.numeroTitreFoncier !==
+          undefined ||
+        data.operationFonciereIds !==
+          undefined ||
+        data.prestationId !==
+          undefined ||
+        data.nombrePages !==
+          undefined ||
+        data.langue !==
+          undefined;
+
+
+      if (nouveauxChampsFournis) {
+        throw new AppError(
+          "Cette ancienne demande ne peut pas être migrée automatiquement vers la nouvelle structure lors d'une modification.",
+          400
+        );
+      }
+
+
+      /**
+       * Ancienne tarification.
+       */
+      const tarificationFieldsProvided =
+        data.nombreExemplaires !==
+          undefined ||
+        data.langueCertificat !==
+          undefined ||
+        data.traductionDemandee !==
+          undefined;
+
+
+      const tarificationUpdate =
+        tarificationFieldsProvided
+          ? this.calculateTarification(
+              data.nombreExemplaires ??
+                demande
+                  .nombreExemplaires,
+
+              data.langueCertificat ??
+                demande
+                  .langueCertificat,
+
+              data.traductionDemandee ??
+                demande
+                  .traductionDemandee
+            )
+          : null;
+
+
+      return this.demandeRepository
+        .update(
+          id,
+          {
+            ...commonUpdate,
+
+            ...(data.referenceFonciere !==
+              undefined && {
+              referenceFonciere:
+                data.referenceFonciere,
+            }),
+
+            ...(tarificationUpdate
+              ? {
+                  nombreExemplaires:
+                    tarificationUpdate
+                      .nombreExemplaires,
+
+                  langueCertificat:
+                    tarificationUpdate
+                      .langueCertificat,
+
+                  traductionDemandee:
+                    tarificationUpdate
+                      .traductionDemandee,
+
+                  prixUnitaire:
+                    tarificationUpdate
+                      .prixUnitaire,
+
+                  supplementTraduction:
+                    tarificationUpdate
+                      .supplementTraduction,
+
+                  montantTotal:
+                    tarificationUpdate
+                      .montantTotal,
+                }
+              : {}),
+          }
+        );
+    }
+
+
+    /**
+     * ========================================================
+     * NOUVELLES DEMANDES
+     * ========================================================
+     *
+     * Les anciens paramètres tarifaires ne
+     * sont plus autorisés pour les nouvelles
+     * demandes.
+     */
+    const anciensChampsFournis =
+      data.referenceFonciere !==
+        undefined ||
+      data.nombreExemplaires !==
+        undefined ||
+      data.langueCertificat !==
+        undefined ||
+      data.traductionDemandee !==
+        undefined;
+
+
+    if (anciensChampsFournis) {
+      throw new AppError(
+        "Les anciens paramètres de tarification ne sont plus autorisés pour cette demande.",
+        400
       );
+    }
+
+
+    /**
+     * ========================================================
+     * INSCRIPTION
+     * ========================================================
+     */
+    if (
+      demande.nature ===
+      NatureDemande.INSCRIPTION
+    ) {
+      /**
+       * Une inscription ne peut pas recevoir
+       * des champs spécifiques à une prestation.
+       */
+      if (
+        data.prestationId !==
+          undefined ||
+        data.nombrePages !==
+          undefined ||
+        data.langue !==
+          undefined
+      ) {
+        throw new AppError(
+          "Les paramètres de prestation ne sont pas autorisés pour une demande d'inscription.",
+          400
+        );
+      }
+
+
+      /**
+       * ------------------------------------------------------
+       * TITRE FONCIER FINAL
+       * ------------------------------------------------------
+       */
+      const gouvernoratIdFinal =
+        data.gouvernoratId ??
+        demande.titreFoncier
+          ?.gouvernoratId;
+
+
+      const numeroTitreFinal =
+        data.numeroTitreFoncier
+          ?.trim() ??
+        demande.titreFoncier
+          ?.numero;
+
+
+      if (
+        !gouvernoratIdFinal ||
+        !numeroTitreFinal
+      ) {
+        throw new AppError(
+          "Le gouvernorat et le numéro du titre foncier sont obligatoires.",
+          400
+        );
+      }
+
+
+      const gouvernorat =
+        await ReferentielService
+          .getGouvernoratById(
+            gouvernoratIdFinal
+          );
+
+
+      if (!gouvernorat) {
+        throw new AppError(
+          "Gouvernorat introuvable ou inactif.",
+          404
+        );
+      }
+
+
+      /**
+       * ------------------------------------------------------
+       * OPERATIONS FONCIERES FINALES
+       * ------------------------------------------------------
+       */
+      const operationFonciereIds =
+        data.operationFonciereIds ??
+        demande
+          .operationsFoncieres
+          .map(
+            (operation) =>
+              operation
+                .typeOperationFonciereId
+          );
+
+
+      if (
+        operationFonciereIds.length ===
+        0
+      ) {
+        throw new AppError(
+          "Au moins une opération foncière est obligatoire.",
+          400
+        );
+      }
+
+
+      /**
+       * Le tarif n'est recalculé que si
+       * les opérations changent ou si le
+       * snapshot tarifaire est absent.
+       */
+      const recalculerTarification =
+        data.operationFonciereIds !==
+          undefined ||
+        demande.tarification ===
+          null;
+
+
+      const updateData:
+        Prisma.DemandeUpdateInput =
+          {
+            ...commonUpdate,
+
+            referenceFonciere:
+              `${numeroTitreFinal}/${gouvernorat.code}`,
+
+            titreFoncier: {
+              connectOrCreate: {
+                where: {
+                  numero_gouvernoratId:
+                    {
+                      numero:
+                        numeroTitreFinal,
+
+                      gouvernoratId:
+                        gouvernorat.id,
+                    },
+                },
+
+                create: {
+                  numero:
+                    numeroTitreFinal,
+
+                  gouvernorat: {
+                    connect: {
+                      id:
+                        gouvernorat.id,
+                    },
+                  },
+                },
+              },
+            },
+          };
+
+
+      /**
+       * Si les opérations ont changé,
+       * on synchronise les associations sans
+       * recréer celles qui existent déjà.
+       *
+       * Exemple :
+       * - avant : VENTE
+       * - après : VENTE + HYPOTHEQUE
+       *
+       * VENTE est conservée et HYPOTHEQUE
+       * est ajoutée. Cela évite une violation
+       * de la contrainte unique :
+       *
+       * @@unique([demandeId, typeOperationFonciereId])
+       */
+      if (
+        data.operationFonciereIds !==
+        undefined
+      ) {
+        updateData.operationsFoncieres = {
+          /**
+           * Supprime uniquement les opérations
+           * qui ne font plus partie de la nouvelle
+           * sélection.
+           */
+          deleteMany: {
+            typeOperationFonciereId: {
+              notIn:
+                operationFonciereIds,
+            },
+          },
+
+          /**
+           * Ajoute les nouvelles opérations.
+           *
+           * createMany permet de renseigner
+           * directement la clé étrangère, et
+           * skipDuplicates évite de recréer une
+           * association déjà présente.
+           */
+          createMany: {
+            data:
+              operationFonciereIds
+                .map(
+                  (
+                    typeOperationFonciereId
+                  ) => ({
+                    typeOperationFonciereId,
+                  })
+                ),
+
+            skipDuplicates: true,
+          },
+        };
+      }
+
+
+      /**
+       * ------------------------------------------------------
+       * RECALCUL TARIFAIRE
+       * ------------------------------------------------------
+       */
+      if (recalculerTarification) {
+        const tarification =
+          await TarificationService
+            .calculer({
+              nature:
+                "INSCRIPTION",
+
+              operationFonciereIds,
+            });
+
+
+        const montantTotal =
+          new Prisma.Decimal(
+            tarification
+              .montantTotal
+          );
+
+
+        /**
+         * Compatibilité temporaire avec
+         * le module Paiement actuel.
+         */
+        updateData.montantTotal =
+          montantTotal;
+
+        updateData.prixUnitaire =
+          montantTotal;
+
+        updateData.nombreExemplaires =
+          1;
+
+        updateData.traductionDemandee =
+          false;
+
+        updateData.supplementTraduction =
+          new Prisma.Decimal(0);
+
+
+        /**
+         * Mise à jour du snapshot tarifaire.
+         */
+        updateData.tarification = {
+          upsert: {
+            create: {
+              nature:
+                NatureDemande
+                  .INSCRIPTION,
+
+              prestationCode:
+                null,
+
+              prestationLibelle:
+                null,
+
+              langue:
+                null,
+
+              nombrePages:
+                null,
+
+              montantTotal,
+
+              referenceReglementaire:
+                tarification
+                  .referenceReglementaire,
+
+              statut:
+                StatutTarification
+                  .CALCULEE,
+
+              dateCalcul:
+                new Date(),
+
+              dateFigeage:
+                null,
+
+              lignes: {
+                create:
+                  tarification
+                    .lignes
+                    .map(
+                      (
+                        ligne,
+                        index
+                      ) => ({
+                        type:
+                          ligne.type,
+
+                        code:
+                          ligne.code,
+
+                        libelle:
+                          ligne.libelle,
+
+                        quantite:
+                          ligne.quantite,
+
+                        montantUnitaire:
+                          new Prisma.Decimal(
+                            ligne
+                              .montantUnitaire
+                          ),
+
+                        montant:
+                          new Prisma.Decimal(
+                            ligne.montant
+                          ),
+
+                        ordre:
+                          index + 1,
+                      })
+                    ),
+              },
+            },
+
+            update: {
+              nature:
+                NatureDemande
+                  .INSCRIPTION,
+
+              prestationCode:
+                null,
+
+              prestationLibelle:
+                null,
+
+              langue:
+                null,
+
+              nombrePages:
+                null,
+
+              montantTotal,
+
+              referenceReglementaire:
+                tarification
+                  .referenceReglementaire,
+
+              statut:
+                StatutTarification
+                  .CALCULEE,
+
+              dateCalcul:
+                new Date(),
+
+              dateFigeage:
+                null,
+
+              lignes: {
+                deleteMany: {},
+
+                create:
+                  tarification
+                    .lignes
+                    .map(
+                      (
+                        ligne,
+                        index
+                      ) => ({
+                        type:
+                          ligne.type,
+
+                        code:
+                          ligne.code,
+
+                        libelle:
+                          ligne.libelle,
+
+                        quantite:
+                          ligne.quantite,
+
+                        montantUnitaire:
+                          new Prisma.Decimal(
+                            ligne
+                              .montantUnitaire
+                          ),
+
+                        montant:
+                          new Prisma.Decimal(
+                            ligne.montant
+                          ),
+
+                        ordre:
+                          index + 1,
+                      })
+                    ),
+              },
+            },
+          },
+        };
+      }
+
+
+      return this.demandeRepository
+        .update(
+          id,
+          updateData
+        );
+    }
+
+
+    /**
+     * ========================================================
+     * PRESTATION
+     * ========================================================
+     */
+    if (
+      demande.nature ===
+      NatureDemande.PRESTATION
+    ) {
+      /**
+       * Une prestation ne peut pas contenir
+       * d'opérations foncières.
+       */
+      if (
+        data.operationFonciereIds !==
+        undefined
+      ) {
+        throw new AppError(
+          "Les opérations foncières ne sont pas autorisées pour une demande de prestation.",
+          400
+        );
+      }
+
+
+      /**
+       * ------------------------------------------------------
+       * PRESTATION FINALE
+       * ------------------------------------------------------
+       */
+      const prestationIdFinal =
+        data.prestationId ??
+        demande.prestationId;
+
+
+      if (!prestationIdFinal) {
+        throw new AppError(
+          "La prestation est obligatoire.",
+          400
+        );
+      }
+
+
+      const prestation =
+        await ReferentielService
+          .getPrestationById(
+            prestationIdFinal
+          );
+
+
+      if (!prestation) {
+        throw new AppError(
+          "Prestation introuvable ou inactive.",
+          404
+        );
+      }
+
+
+      /**
+       * ------------------------------------------------------
+       * TITRE FONCIER FINAL
+       * ------------------------------------------------------
+       */
+      const gouvernoratIdFinal =
+        data.gouvernoratId ??
+        demande.titreFoncier
+          ?.gouvernoratId;
+
+
+      const numeroTitreFinal =
+        data.numeroTitreFoncier
+          ?.trim() ??
+        demande.titreFoncier
+          ?.numero;
+
+
+      /**
+       * Si la prestation nécessite un titre,
+       * les deux informations sont obligatoires.
+       */
+      if (
+        prestation
+          .necessiteTitreFoncier &&
+        (
+          !gouvernoratIdFinal ||
+          !numeroTitreFinal
+        )
+      ) {
+        throw new AppError(
+          "Le gouvernorat et le numéro du titre foncier sont obligatoires pour cette prestation.",
+          400
+        );
+      }
+
+
+      /**
+       * Les deux informations doivent toujours
+       * être cohérentes lorsqu'un titre existe.
+       */
+      if (
+        (
+          gouvernoratIdFinal &&
+          !numeroTitreFinal
+        ) ||
+        (
+          !gouvernoratIdFinal &&
+          numeroTitreFinal
+        )
+      ) {
+        throw new AppError(
+          "Le gouvernorat et le numéro du titre foncier doivent être renseignés ensemble.",
+          400
+        );
+      }
+
+
+      let gouvernorat:
+        Awaited<
+          ReturnType<
+            typeof ReferentielService.getGouvernoratById
+          >
+        > = null;
+
+
+      if (
+        gouvernoratIdFinal &&
+        numeroTitreFinal
+      ) {
+        gouvernorat =
+          await ReferentielService
+            .getGouvernoratById(
+              gouvernoratIdFinal
+            );
+
+
+        if (!gouvernorat) {
+          throw new AppError(
+            "Gouvernorat introuvable ou inactif.",
+            404
+          );
+        }
+      }
+
+
+      /**
+       * ------------------------------------------------------
+       * LANGUE FINALE
+       * ------------------------------------------------------
+       */
+      const langueStockee =
+        demande.tarification
+          ?.langue ??
+        demande.langueCertificat;
+
+
+      const langueFinale:
+        "ARABE" | "FRANCAIS" =
+          data.langue ??
+          (
+            langueStockee ===
+            LangueCertificat.ARABE
+              ? "ARABE"
+              : "FRANCAIS"
+          );
+
+
+      /**
+       * ------------------------------------------------------
+       * NOMBRE DE PAGES
+       * ------------------------------------------------------
+       */
+      const nombrePagesFinal =
+        prestation
+          .tarificationParPage
+          ? (
+              data.nombrePages ??
+              demande.nombrePages ??
+              undefined
+            )
+          : undefined;
+
+
+      /**
+       * On recalcule uniquement lorsqu'un
+       * paramètre tarifaire change.
+       */
+      const recalculerTarification =
+        data.prestationId !==
+          undefined ||
+        data.nombrePages !==
+          undefined ||
+        data.langue !==
+          undefined ||
+        demande.tarification ===
+          null;
+
+
+      const updateData:
+        Prisma.DemandeUpdateInput =
+          {
+            ...commonUpdate,
+
+            prestation: {
+              connect: {
+                id:
+                  prestation.id,
+              },
+            },
+
+            nombrePages:
+              prestation
+                .tarificationParPage
+                ? nombrePagesFinal ??
+                  null
+                : null,
+
+            langueCertificat:
+              langueFinale ===
+              "FRANCAIS"
+                ? LangueCertificat
+                    .FRANCAIS
+                : LangueCertificat
+                    .ARABE,
+
+            traductionDemandee:
+              false,
+
+            supplementTraduction:
+              new Prisma.Decimal(0),
+          };
+
+
+      /**
+       * Si un titre foncier est présent,
+       * on le normalise et on le rattache.
+       */
+      if (
+        gouvernorat &&
+        numeroTitreFinal
+      ) {
+        updateData.referenceFonciere =
+          `${numeroTitreFinal}/${gouvernorat.code}`;
+
+
+        updateData.titreFoncier = {
+          connectOrCreate: {
+            where: {
+              numero_gouvernoratId:
+                {
+                  numero:
+                    numeroTitreFinal,
+
+                  gouvernoratId:
+                    gouvernorat.id,
+                },
+            },
+
+            create: {
+              numero:
+                numeroTitreFinal,
+
+              gouvernorat: {
+                connect: {
+                  id:
+                    gouvernorat.id,
+                },
+              },
+            },
+          },
+        };
+      }
+
+
+      /**
+       * ------------------------------------------------------
+       * RECALCUL DE LA PRESTATION
+       * ------------------------------------------------------
+       */
+      if (recalculerTarification) {
+        const tarification =
+          await TarificationService
+            .calculer({
+              nature:
+                "PRESTATION",
+
+              prestationId:
+                prestation.id,
+
+              nombrePages:
+                nombrePagesFinal,
+
+              langue:
+                langueFinale,
+            });
+
+
+        const montantTotal =
+          new Prisma.Decimal(
+            tarification
+              .montantTotal
+          );
+
+
+        /**
+         * Compatibilité avec le paiement
+         * existant.
+         */
+        updateData.montantTotal =
+          montantTotal;
+
+        updateData.prixUnitaire =
+          montantTotal;
+
+        updateData.nombreExemplaires =
+          1;
+
+
+        /**
+         * Snapshot tarifaire.
+         */
+        updateData.tarification = {
+          upsert: {
+            create: {
+              nature:
+                NatureDemande
+                  .PRESTATION,
+
+              prestationCode:
+                tarification
+                  .prestation
+                  ?.code ??
+                null,
+
+              prestationLibelle:
+                tarification
+                  .prestation
+                  ?.libelle ??
+                null,
+
+              langue:
+                langueFinale,
+
+              nombrePages:
+                nombrePagesFinal ??
+                null,
+
+              montantTotal,
+
+              referenceReglementaire:
+                tarification
+                  .referenceReglementaire,
+
+              statut:
+                StatutTarification
+                  .CALCULEE,
+
+              dateCalcul:
+                new Date(),
+
+              dateFigeage:
+                null,
+
+              lignes: {
+                create:
+                  tarification
+                    .lignes
+                    .map(
+                      (
+                        ligne,
+                        index
+                      ) => ({
+                        type:
+                          ligne.type,
+
+                        code:
+                          ligne.code,
+
+                        libelle:
+                          ligne.libelle,
+
+                        quantite:
+                          ligne.quantite,
+
+                        montantUnitaire:
+                          new Prisma.Decimal(
+                            ligne
+                              .montantUnitaire
+                          ),
+
+                        montant:
+                          new Prisma.Decimal(
+                            ligne.montant
+                          ),
+
+                        ordre:
+                          index + 1,
+                      })
+                    ),
+              },
+            },
+
+            update: {
+              nature:
+                NatureDemande
+                  .PRESTATION,
+
+              prestationCode:
+                tarification
+                  .prestation
+                  ?.code ??
+                null,
+
+              prestationLibelle:
+                tarification
+                  .prestation
+                  ?.libelle ??
+                null,
+
+              langue:
+                langueFinale,
+
+              nombrePages:
+                nombrePagesFinal ??
+                null,
+
+              montantTotal,
+
+              referenceReglementaire:
+                tarification
+                  .referenceReglementaire,
+
+              statut:
+                StatutTarification
+                  .CALCULEE,
+
+              dateCalcul:
+                new Date(),
+
+              dateFigeage:
+                null,
+
+              lignes: {
+                deleteMany: {},
+
+                create:
+                  tarification
+                    .lignes
+                    .map(
+                      (
+                        ligne,
+                        index
+                      ) => ({
+                        type:
+                          ligne.type,
+
+                        code:
+                          ligne.code,
+
+                        libelle:
+                          ligne.libelle,
+
+                        quantite:
+                          ligne.quantite,
+
+                        montantUnitaire:
+                          new Prisma.Decimal(
+                            ligne
+                              .montantUnitaire
+                          ),
+
+                        montant:
+                          new Prisma.Decimal(
+                            ligne.montant
+                          ),
+
+                        ordre:
+                          index + 1,
+                      })
+                    ),
+              },
+            },
+          },
+        };
+      }
+
+
+      return this.demandeRepository
+        .update(
+          id,
+          updateData
+        );
+    }
+
+
+    /**
+     * Cas théoriquement impossible,
+     * mais conservé comme sécurité.
+     */
+    throw new AppError(
+      "Nature de demande non prise en charge.",
+      400
+    );
   }
 
   /**

@@ -3,13 +3,14 @@ import PDFDocument from "pdfkit";
 import {
   LangueCertificat,
   ModePaiement,
+  NatureDemande,
 } from "@prisma/client";
 
 import type {
   PaiementRepository,
 } from "../repositories/paiement.repository";
 
-/*
+/**
  * Type correspondant au paiement complet
  * retourné par PaiementRepository.findById().
  */
@@ -34,6 +35,9 @@ export class RecuPaiementService {
 
   private static readonly BORDER_COLOR =
     "#D5DDDC";
+
+  private static readonly SOFT_BACKGROUND =
+    "#F4F8F7";
 
   /**
    * Formate un montant monétaire
@@ -66,8 +70,7 @@ export class RecuPaiementService {
   }
 
   /**
-   * Formate la date et l’heure
-   * du paiement.
+   * Formate la date et l'heure.
    */
   private formatDateTime(
     value: Date
@@ -105,6 +108,23 @@ export class RecuPaiementService {
   }
 
   /**
+   * Transforme la nature d'une demande
+   * en libellé lisible.
+   */
+  private formatNature(
+    nature: NatureDemande
+  ): string {
+    switch (nature) {
+      case NatureDemande.INSCRIPTION:
+        return "Inscription foncière";
+
+      case NatureDemande.PRESTATION:
+      default:
+        return "Prestation";
+    }
+  }
+
+  /**
    * Transforme le mode de paiement
    * en libellé lisible.
    */
@@ -119,15 +139,43 @@ export class RecuPaiementService {
   }
 
   /**
-   * Ajoute le titre d’une section
-   * dans le document PDF.
+   * Ajoute une nouvelle page lorsque
+   * l'espace restant est insuffisant.
+   */
+  private ensureSpace(
+    document: PDFKit.PDFDocument,
+    requiredHeight = 80
+  ): void {
+    const bottomLimit =
+      document.page.height -
+      document.page.margins.bottom;
+
+    if (
+      document.y +
+        requiredHeight >
+      bottomLimit
+    ) {
+      document.addPage();
+    }
+  }
+
+  /**
+   * Ajoute le titre d'une section.
    */
   private writeSectionTitle(
     document: PDFKit.PDFDocument,
     title: string
   ): void {
+    this.ensureSpace(
+      document,
+      55
+    );
+
     const leftMargin =
       document.page.margins.left;
+
+    document.x =
+      leftMargin;
 
     const rightLimit =
       document.page.width -
@@ -173,14 +221,24 @@ export class RecuPaiementService {
   }
 
   /**
-   * Ajoute une ligne libellé/valeur
-   * dans le reçu.
+   * Ajoute une ligne libellé / valeur.
    */
   private writeRow(
     document: PDFKit.PDFDocument,
     label: string,
     value: string
   ): void {
+    this.ensureSpace(
+      document,
+      35
+    );
+
+    const leftMargin =
+      document.page.margins.left;
+
+    document.x =
+      leftMargin;
+
     document
       .font("Helvetica-Bold")
       .fontSize(10)
@@ -211,8 +269,520 @@ export class RecuPaiementService {
   }
 
   /**
-   * Dessine le contenu complet
-   * du reçu.
+   * Affiche le tableau des lignes
+   * de tarification réglementaire.
+   */
+  private writeTarificationTable(
+    document: PDFKit.PDFDocument,
+    paiement: PaiementRecuData
+  ): void {
+    const tarification =
+      paiement.demande
+        .tarification;
+
+    if (!tarification) {
+      return;
+    }
+
+    const left =
+      document.page.margins.left;
+
+    const contentWidth =
+      document.page.width -
+      document.page.margins.left -
+      document.page.margins.right;
+
+    const descriptionWidth =
+      contentWidth - 190;
+
+    const quantityWidth =
+      40;
+
+    const unitWidth =
+      70;
+
+    const totalWidth =
+      80;
+
+    const headerHeight =
+      25;
+
+    const drawHeader = () => {
+      this.ensureSpace(
+        document,
+        headerHeight + 35
+      );
+
+      const y =
+        document.y;
+
+      document
+        .rect(
+          left,
+          y,
+          contentWidth,
+          headerHeight
+        )
+        .fill(
+          RecuPaiementService
+            .SOFT_BACKGROUND
+        );
+
+      document
+        .font("Helvetica-Bold")
+        .fontSize(8.5)
+        .fillColor(
+          RecuPaiementService
+            .TEXT_COLOR
+        );
+
+      document.text(
+        "Libellé",
+        left + 6,
+        y + 8,
+        {
+          width:
+            descriptionWidth - 12,
+        }
+      );
+
+      document.text(
+        "Qté",
+        left +
+          descriptionWidth,
+        y + 8,
+        {
+          width:
+            quantityWidth,
+          align:
+            "center",
+        }
+      );
+
+      document.text(
+        "Unitaire",
+        left +
+          descriptionWidth +
+          quantityWidth,
+        y + 8,
+        {
+          width:
+            unitWidth,
+          align:
+            "right",
+        }
+      );
+
+      document.text(
+        "Montant",
+        left +
+          descriptionWidth +
+          quantityWidth +
+          unitWidth,
+        y + 8,
+        {
+          width:
+            totalWidth - 6,
+          align:
+            "right",
+        }
+      );
+
+      document
+        .moveTo(
+          left,
+          y + headerHeight
+        )
+        .lineTo(
+          left + contentWidth,
+          y + headerHeight
+        )
+        .lineWidth(0.8)
+        .strokeColor(
+          RecuPaiementService
+            .BORDER_COLOR
+        )
+        .stroke();
+
+      document.y =
+        y + headerHeight;
+    };
+
+    drawHeader();
+
+    tarification.lignes.forEach(
+      (
+        ligne
+      ) => {
+        const labelHeight =
+          document.heightOfString(
+            ligne.libelle,
+            {
+              width:
+                descriptionWidth - 12,
+            }
+          );
+
+        const rowHeight =
+          Math.max(
+            26,
+            labelHeight + 12
+          );
+
+        const bottomLimit =
+          document.page.height -
+          document.page.margins.bottom;
+
+        if (
+          document.y +
+            rowHeight >
+          bottomLimit
+        ) {
+          document.addPage();
+
+          this.writeSectionTitle(
+            document,
+            "Détail de la tarification (suite)"
+          );
+
+          drawHeader();
+        }
+
+        const y =
+          document.y;
+
+        document
+          .font("Helvetica")
+          .fontSize(8.5)
+          .fillColor(
+            RecuPaiementService
+              .TEXT_COLOR
+          )
+          .text(
+            ligne.libelle,
+            left + 6,
+            y + 7,
+            {
+              width:
+                descriptionWidth - 12,
+            }
+          );
+
+        document.text(
+          String(
+            ligne.quantite
+          ),
+          left +
+            descriptionWidth,
+          y + 7,
+          {
+            width:
+              quantityWidth,
+            align:
+              "center",
+          }
+        );
+
+        document.text(
+          this.formatMontant(
+            ligne.montantUnitaire
+          ),
+          left +
+            descriptionWidth +
+            quantityWidth,
+          y + 7,
+          {
+            width:
+              unitWidth,
+            align:
+              "right",
+          }
+        );
+
+        document
+          .font("Helvetica-Bold")
+          .text(
+            this.formatMontant(
+              ligne.montant
+            ),
+            left +
+              descriptionWidth +
+              quantityWidth +
+              unitWidth,
+            y + 7,
+            {
+              width:
+                totalWidth - 6,
+              align:
+                "right",
+            }
+          );
+
+        document
+          .moveTo(
+            left,
+            y + rowHeight
+          )
+          .lineTo(
+            left +
+              contentWidth,
+            y + rowHeight
+          )
+          .lineWidth(0.5)
+          .strokeColor(
+            RecuPaiementService
+              .BORDER_COLOR
+          )
+          .stroke();
+
+        document.y =
+          y + rowHeight;
+      }
+    );
+
+    document.moveDown(
+      0.5
+    );
+
+    const totalY =
+      document.y;
+
+    document
+      .font("Helvetica-Bold")
+      .fontSize(10)
+      .fillColor(
+        RecuPaiementService
+          .BRAND_COLOR
+      )
+      .text(
+        "TOTAL TARIFAIRE",
+        left,
+        totalY,
+        {
+          width:
+            contentWidth -
+            totalWidth -
+            10,
+          align:
+            "right",
+        }
+      );
+
+    document.text(
+      this.formatMontant(
+        tarification
+          .montantTotal
+      ),
+      left +
+        contentWidth -
+        totalWidth,
+      totalY,
+      {
+        width:
+          totalWidth,
+        align:
+          "right",
+      }
+    );
+
+    document.y =
+      totalY + 24;
+
+this.writeRow(
+  document,
+  "Référence réglementaire",
+  tarification.referenceReglementaire ??
+    "Non renseignée"
+);
+  }
+
+  /**
+   * Affiche les informations métier
+   * d'une nouvelle demande.
+   */
+  private writeNouvelleDemandeDetails(
+    document: PDFKit.PDFDocument,
+    paiement: PaiementRecuData
+  ): void {
+    const demande =
+      paiement.demande;
+
+    if (!demande.nature) {
+      return;
+    }
+
+    this.writeRow(
+      document,
+      "Nature",
+      this.formatNature(
+        demande.nature
+      )
+    );
+
+    if (
+      demande.titreFoncier
+    ) {
+      this.writeRow(
+        document,
+        "Numéro du titre foncier",
+        demande
+          .titreFoncier
+          .numero
+      );
+
+      this.writeRow(
+        document,
+        "Gouvernorat",
+        demande
+          .titreFoncier
+          .gouvernorat
+          .nom
+      );
+    }
+
+    if (
+      demande.nature ===
+      NatureDemande.INSCRIPTION
+    ) {
+      const operations =
+        demande
+          .operationsFoncieres
+          .map(
+            (
+              item
+            ) =>
+              item
+                .typeOperationFonciere
+                .libelle
+          );
+
+      this.writeRow(
+        document,
+        "Opération(s) foncière(s)",
+        operations.length > 0
+          ? operations.join(", ")
+          : "Aucune opération"
+      );
+
+      return;
+    }
+
+    if (
+      demande.nature ===
+      NatureDemande.PRESTATION
+    ) {
+      if (
+        demande.prestation
+      ) {
+        this.writeRow(
+          document,
+          "Prestation",
+          demande
+            .prestation
+            .libelle
+        );
+      }
+
+      const langue =
+        demande
+          .tarification
+          ?.langue;
+
+      if (langue) {
+        this.writeRow(
+          document,
+          "Langue",
+          this.formatLangue(
+            langue
+          )
+        );
+      }
+
+      const nombrePages =
+        demande
+          .tarification
+          ?.nombrePages ??
+        demande.nombrePages;
+
+      if (
+        nombrePages !==
+          null &&
+        nombrePages !==
+          undefined
+      ) {
+        this.writeRow(
+          document,
+          "Nombre de pages",
+          String(
+            nombrePages
+          )
+        );
+      }
+    }
+  }
+
+  /**
+   * Affiche les anciens paramètres
+   * tarifaires uniquement pour les
+   * demandes legacy (nature = null).
+   */
+  private writeLegacyTarification(
+    document: PDFKit.PDFDocument,
+    paiement: PaiementRecuData
+  ): void {
+    this.writeSectionTitle(
+      document,
+      "Détails de la prestation"
+    );
+
+    this.writeRow(
+      document,
+      "Nombre d'exemplaires",
+      String(
+        paiement.demande
+          .nombreExemplaires
+      )
+    );
+
+    this.writeRow(
+      document,
+      "Langue du certificat",
+      this.formatLangue(
+        paiement.demande
+          .langueCertificat
+      )
+    );
+
+    this.writeRow(
+      document,
+      "Traduction demandée",
+      paiement.demande
+        .traductionDemandee
+        ? "Oui"
+        : "Non"
+    );
+
+    this.writeRow(
+      document,
+      "Prix unitaire",
+      this.formatMontant(
+        paiement.demande
+          .prixUnitaire
+      )
+    );
+
+    this.writeRow(
+      document,
+      "Supplément de traduction",
+      this.formatMontant(
+        paiement.demande
+          .supplementTraduction
+      )
+    );
+  }
+
+  /**
+   * Dessine le contenu complet du reçu.
    */
   private renderReceipt(
     document: PDFKit.PDFDocument,
@@ -229,7 +799,7 @@ export class RecuPaiementService {
       leftMargin -
       rightMargin;
 
-    /*
+    /**
      * Bande supérieure.
      */
     document
@@ -244,7 +814,7 @@ export class RecuPaiementService {
           .BRAND_COLOR
       );
 
-    /*
+    /**
      * En-tête.
      */
     document
@@ -273,7 +843,7 @@ export class RecuPaiementService {
       .font("Helvetica")
       .fontSize(9)
       .text(
-        "Système d’automatisation des inscriptions foncières",
+        "Système d'automatisation des inscriptions foncières",
         {
           align: "center",
         }
@@ -301,8 +871,8 @@ export class RecuPaiementService {
       1
     );
 
-    /*
-     * Cadre d’identification du reçu.
+    /**
+     * Cadre d'identification du reçu.
      */
     const receiptBoxY =
       document.y;
@@ -391,7 +961,7 @@ export class RecuPaiementService {
     document.y =
       receiptBoxY + 88;
 
-    /*
+    /**
      * Informations du demandeur.
      */
     this.writeSectionTitle(
@@ -427,7 +997,7 @@ export class RecuPaiementService {
       );
     }
 
-    /*
+    /**
      * Informations de la demande.
      */
     this.writeSectionTitle(
@@ -441,12 +1011,22 @@ export class RecuPaiementService {
       paiement.demande.numero
     );
 
-    this.writeRow(
-      document,
-      "Référence foncière",
+    if (
       paiement.demande
-        .referenceFonciere
-    );
+        .nature !== null
+    ) {
+      this.writeNouvelleDemandeDetails(
+        document,
+        paiement
+      );
+    } else {
+      this.writeRow(
+        document,
+        "Référence foncière",
+        paiement.demande
+          .referenceFonciere
+      );
+    }
 
     this.writeRow(
       document,
@@ -455,61 +1035,39 @@ export class RecuPaiementService {
         .adresseBien
     );
 
-    /*
-     * Informations tarifaires.
+    /**
+     * Tarification.
+     *
+     * Nouvelle demande :
+     * snapshot réglementaire.
+     *
+     * Ancienne demande :
+     * ancien modèle tarifaire.
      */
-    this.writeSectionTitle(
-      document,
-      "Détails de la prestation"
-    );
-
-    this.writeRow(
-      document,
-      "Nombre d’exemplaires",
-      String(
-        paiement.demande
-          .nombreExemplaires
-      )
-    );
-
-    this.writeRow(
-      document,
-      "Langue du certificat",
-      this.formatLangue(
-        paiement.demande
-          .langueCertificat
-      )
-    );
-
-    this.writeRow(
-      document,
-      "Traduction demandée",
+    if (
       paiement.demande
-        .traductionDemandee
-        ? "Oui"
-        : "Non"
-    );
+        .nature !== null &&
+      paiement.demande
+        .tarification
+    ) {
+      this.writeSectionTitle(
+        document,
+        "Détail de la tarification"
+      );
 
-    this.writeRow(
-      document,
-      "Prix unitaire",
-      this.formatMontant(
-        paiement.demande
-          .prixUnitaire
-      )
-    );
+      this.writeTarificationTable(
+        document,
+        paiement
+      );
+    } else {
+      this.writeLegacyTarification(
+        document,
+        paiement
+      );
+    }
 
-    this.writeRow(
-      document,
-      "Supplément de traduction",
-      this.formatMontant(
-        paiement.demande
-          .supplementTraduction
-      )
-    );
-
-    /*
-     * Informations d’encaissement.
+    /**
+     * Encaissement.
      */
     this.writeSectionTitle(
       document,
@@ -548,9 +1106,14 @@ export class RecuPaiementService {
       )
     );
 
-    /*
+    /**
      * Cadre du montant encaissé.
      */
+    this.ensureSpace(
+      document,
+      80
+    );
+
     document.moveDown(
       0.5
     );
@@ -607,8 +1170,8 @@ export class RecuPaiementService {
     document.y =
       totalBoxY + 68;
 
-    /*
-     * Informations du caissier.
+    /**
+     * Informations de la caisse.
      */
     this.writeSectionTitle(
       document,
@@ -628,6 +1191,18 @@ export class RecuPaiementService {
     );
 
     if (
+      paiement.journalCaisse
+    ) {
+      this.writeRow(
+        document,
+        "Journal de caisse",
+        paiement
+          .journalCaisse
+          .numero
+      );
+    }
+
+    if (
       paiement.observations
     ) {
       this.writeRow(
@@ -637,9 +1212,14 @@ export class RecuPaiementService {
       );
     }
 
-    /*
+    /**
      * Pied de page.
      */
+    this.ensureSpace(
+      document,
+      60
+    );
+
     document.moveDown(
       1
     );
@@ -673,7 +1253,7 @@ export class RecuPaiementService {
   /**
    * Génère le reçu sous forme de Buffer.
    *
-   * Le fichier n’est pas stocké de manière
+   * Le fichier n'est pas stocké de manière
    * permanente sur le serveur.
    */
   async generate(

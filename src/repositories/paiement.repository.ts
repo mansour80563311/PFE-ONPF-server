@@ -1,16 +1,127 @@
+import {
+  StatutTarification,
+} from "@prisma/client";
+
 import type {
   Prisma,
 } from "@prisma/client";
 
 import prisma from "../config/prisma";
 
+
+/**
+ * Informations retournées avec un paiement.
+ *
+ * Les anciens champs sont temporairement
+ * conservés pour assurer la compatibilité
+ * avec le reçu et les anciennes demandes.
+ *
+ * Les nouvelles informations métier sont
+ * également retournées :
+ *
+ * - nature ;
+ * - titre foncier ;
+ * - opérations ;
+ * - prestation ;
+ * - tarification détaillée.
+ */
+const paiementInclude = {
+  caissier: {
+    select: {
+      id: true,
+      nom: true,
+      prenom: true,
+      login: true,
+
+      role: {
+        select: {
+          id: true,
+          nom: true,
+        },
+      },
+    },
+  },
+
+  demande: {
+    include: {
+      /**
+       * Agent ayant créé la demande.
+       */
+      utilisateur: {
+        select: {
+          id: true,
+          nom: true,
+          prenom: true,
+          login: true,
+        },
+      },
+
+      /**
+       * Nouveau titre foncier.
+       */
+      titreFoncier: {
+        include: {
+          gouvernorat: true,
+        },
+      },
+
+      /**
+       * Opérations d'une inscription.
+       */
+      operationsFoncieres: {
+        include: {
+          typeOperationFonciere:
+            true,
+        },
+
+        orderBy: {
+          createdAt:
+            "asc" as const,
+        },
+      },
+
+      /**
+       * Prestation éventuelle.
+       */
+      prestation: true,
+
+      /**
+       * Snapshot réglementaire
+       * utilisé pour le paiement.
+       */
+      tarification: {
+        include: {
+          lignes: {
+            orderBy: {
+              ordre:
+                "asc" as const,
+            },
+          },
+        },
+      },
+    },
+  },
+
+  journalCaisse: {
+    select: {
+      id: true,
+      numero: true,
+      dateJour: true,
+      statut: true,
+    },
+  },
+} satisfies Prisma.PaiementInclude;
+
+
 export class PaiementRepository {
   /**
-   * Recherche le paiement associé à une demande.
+   * ========================================================
+   * RECHERCHE PAR DEMANDE
+   * ========================================================
    *
-   * Comme demandeId est unique dans le modèle
-   * Paiement, une demande ne peut avoir qu’un
-   * seul paiement.
+   * demandeId est unique dans Paiement :
+   * une demande ne peut avoir qu'un seul
+   * paiement.
    */
   async findByDemandeId(
     demandeId: string
@@ -20,45 +131,16 @@ export class PaiementRepository {
         demandeId,
       },
 
-      include: {
-        caissier: {
-          select: {
-            id: true,
-            nom: true,
-            prenom: true,
-            login: true,
-
-            role: {
-              select: {
-                id: true,
-                nom: true,
-              },
-            },
-          },
-        },
-
-        demande: {
-          select: {
-            id: true,
-            numero: true,
-            nomDemandeur: true,
-            prenomDemandeur: true,
-            cin: true,
-            nombreExemplaires: true,
-            langueCertificat: true,
-            traductionDemandee: true,
-            prixUnitaire: true,
-            supplementTraduction: true,
-            montantTotal: true,
-            statut: true,
-          },
-        },
-      },
+      include:
+        paiementInclude,
     });
   }
 
+
   /**
-   * Recherche un paiement par son identifiant.
+   * ========================================================
+   * RECHERCHE PAR ID
+   * ========================================================
    */
   async findById(
     id: string
@@ -68,52 +150,19 @@ export class PaiementRepository {
         id,
       },
 
-      include: {
-        caissier: {
-          select: {
-            id: true,
-            nom: true,
-            prenom: true,
-            login: true,
-
-            role: {
-              select: {
-                id: true,
-                nom: true,
-              },
-            },
-          },
-        },
-
-        demande: {
-          select: {
-            id: true,
-            numero: true,
-            nomDemandeur: true,
-            prenomDemandeur: true,
-            cin: true,
-            telephone: true,
-            email: true,
-            referenceFonciere: true,
-            adresseBien: true,
-            nombreExemplaires: true,
-            langueCertificat: true,
-            traductionDemandee: true,
-            prixUnitaire: true,
-            supplementTraduction: true,
-            montantTotal: true,
-            statut: true,
-          },
-        },
-      },
+      include:
+        paiementInclude,
     });
   }
 
+
   /**
-   * Recherche le dernier numéro de reçu créé
-   * pour une année précise.
+   * ========================================================
+   * DERNIER NUMERO DE RECU
+   * ========================================================
    *
    * Exemple :
+   *
    * REC-2026-000001
    */
   async findLastNumeroRecu(
@@ -138,8 +187,15 @@ export class PaiementRepository {
     });
   }
 
+
   /**
-   * Enregistre un nouveau paiement.
+   * ========================================================
+   * CREATION SIMPLE
+   * ========================================================
+   *
+   * Conservée temporairement pour
+   * compatibilité éventuelle avec d'autres
+   * modules.
    */
   async create(
     data:
@@ -148,42 +204,86 @@ export class PaiementRepository {
     return prisma.paiement.create({
       data,
 
-      include: {
-        caissier: {
-          select: {
-            id: true,
-            nom: true,
-            prenom: true,
-            login: true,
-
-            role: {
-              select: {
-                id: true,
-                nom: true,
-              },
-            },
-          },
-        },
-
-        demande: {
-          select: {
-            id: true,
-            numero: true,
-            nomDemandeur: true,
-            prenomDemandeur: true,
-            cin: true,
-            telephone: true,
-            referenceFonciere: true,
-            nombreExemplaires: true,
-            langueCertificat: true,
-            traductionDemandee: true,
-            prixUnitaire: true,
-            supplementTraduction: true,
-            montantTotal: true,
-            statut: true,
-          },
-        },
-      },
+      include:
+        paiementInclude,
     });
+  }
+
+
+  /**
+   * ========================================================
+   * CREATION DU PAIEMENT + FIGEAGE TARIFAIRE
+   * ========================================================
+   *
+   * Ces deux écritures sont réalisées
+   * dans la même transaction.
+   *
+   * Si la création du paiement échoue,
+   * le figage de la tarification est annulé.
+   *
+   * Si le figage échoue,
+   * le paiement n'est pas enregistré.
+   */
+  async createAndFreezeTarification(
+    params: {
+      data:
+        Prisma.PaiementCreateInput;
+
+      tarificationId:
+        string | null;
+
+      dateFigeage:
+        Date;
+    }
+  ) {
+    const {
+      data,
+      tarificationId,
+      dateFigeage,
+    } = params;
+
+
+    return prisma.$transaction(
+      async (tx) => {
+        /**
+         * Pour une nouvelle demande,
+         * le snapshot tarifaire devient
+         * définitif au moment du paiement.
+         *
+         * Les anciennes demandes peuvent ne
+         * pas posséder de TarificationDemande.
+         */
+        if (tarificationId) {
+          await tx
+            .tarificationDemande
+            .update({
+              where: {
+                id:
+                  tarificationId,
+              },
+
+              data: {
+                statut:
+                  StatutTarification
+                    .FIGEE,
+
+                dateFigeage,
+              },
+            });
+        }
+
+
+        /**
+         * Création du paiement dans la
+         * même transaction.
+         */
+        return tx.paiement.create({
+          data,
+
+          include:
+            paiementInclude,
+        });
+      }
+    );
   }
 }
