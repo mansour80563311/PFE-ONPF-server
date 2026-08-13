@@ -5,6 +5,7 @@ import {
   StatutPaiement,
   StatutTarification,
   StatutVerificationCni,
+  TypeDocument,
 } from "@prisma/client";
 
 import { AppError } from "../errors/AppError";
@@ -16,6 +17,10 @@ import {
 import {
   PaiementRepository,
 } from "../repositories/paiement.repository";
+
+import {
+  DemandeDocumentRepository,
+} from "../repositories/demande-document.repository";
 
 import {
   UserRepository,
@@ -43,8 +48,104 @@ export class PaiementService {
   private userRepository =
     new UserRepository();
 
+  private documentRepository =
+    new DemandeDocumentRepository();
+
   private journalCaisseService =
     new JournalCaisseService();
+
+
+  /**
+   * ========================================================
+   * VERIFICATION DES PIECES AVANT ENCAISSEMENT
+   * ========================================================
+   *
+   * Le paiement fige la demande et verrouille les pièces.
+   * On impose donc que le dossier documentaire soit complet
+   * avant l'encaissement.
+   *
+   * Pièces obligatoires :
+   *
+   * - une pièce d'identité : CIN ou PASSEPORT ;
+   * - le CONTRAT ;
+   * - la PROCURATION.
+   *
+   * La conformité n'est pas contrôlée ici :
+   * elle relève du Responsable lorsque la demande est EN_COURS.
+   */
+  private async assertRequiredDocumentsPresent(
+    demandeId: string
+  ): Promise<void> {
+    const documents =
+      await this.documentRepository
+        .findAllByDemandeId(
+          demandeId
+        );
+
+
+    const hasIdentityDocument =
+      documents.some(
+        (document) =>
+          document.type ===
+            TypeDocument.CIN ||
+          document.type ===
+            TypeDocument.PASSEPORT
+      );
+
+
+    const hasContrat =
+      documents.some(
+        (document) =>
+          document.type ===
+          TypeDocument.CONTRAT
+      );
+
+
+    const hasProcuration =
+      documents.some(
+        (document) =>
+          document.type ===
+          TypeDocument.PROCURATION
+      );
+
+
+    const missingDocuments:
+      string[] = [];
+
+
+    if (!hasIdentityDocument) {
+      missingDocuments.push(
+        "CIN ou passeport"
+      );
+    }
+
+
+    if (!hasContrat) {
+      missingDocuments.push(
+        "contrat"
+      );
+    }
+
+
+    if (!hasProcuration) {
+      missingDocuments.push(
+        "procuration"
+      );
+    }
+
+
+    if (
+      missingDocuments.length >
+      0
+    ) {
+      throw new AppError(
+        `La demande ne peut pas être encaissée car le dossier documentaire est incomplet. Pièce(s) manquante(s) : ${missingDocuments.join(
+          ", "
+        )}.`,
+        400
+      );
+    }
+  }
 
 
   /**
@@ -230,6 +331,21 @@ export class PaiementService {
         400
       );
     }
+
+
+    /**
+     * ------------------------------------------------------
+     * COMPLETUDE DU DOSSIER DOCUMENTAIRE
+     * ------------------------------------------------------
+     *
+     * Le paiement verrouille ensuite les documents.
+     * On refuse donc l'encaissement tant que toutes
+     * les pièces obligatoires ne sont pas déposées.
+     */
+    await this
+      .assertRequiredDocumentsPresent(
+        demandeId
+      );
 
 
     /**
