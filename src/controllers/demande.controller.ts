@@ -9,6 +9,14 @@ import {
 } from "../services/demande.service";
 
 import {
+  DemandeDocumentService,
+} from "../services/demande-document.service";
+
+import {
+  RecapitulatifDemandeService,
+} from "../services/recapitulatif-demande.service";
+
+import {
   ApiResponse,
 } from "../utils/ApiResponse";
 
@@ -26,6 +34,12 @@ type DemandeParams = {
 export class DemandeController {
   private demandeService =
     new DemandeService();
+
+  private demandeDocumentService =
+    new DemandeDocumentService();
+
+  private recapitulatifDemandeService =
+    new RecapitulatifDemandeService();
 
   async findAll(
     req: Request,
@@ -77,6 +91,67 @@ export class DemandeController {
           "Demande récupérée.",
           demande
         )
+      );
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async generateRecapitulatif(
+    req: Request<DemandeParams>,
+    res: Response,
+    next: NextFunction
+  ) {
+    try {
+      const demande =
+        await this.demandeService
+          .findById(
+            req.params.id,
+            req.user!.userId,
+            req.user!.role
+          );
+
+      const documents =
+        await this.demandeDocumentService
+          .findAll(
+            req.params.id,
+            req.user!.userId,
+            req.user!.role
+          );
+
+      const pdfBuffer =
+        await this
+          .recapitulatifDemandeService
+          .generate(
+            demande,
+            documents
+          );
+
+      const safeNumero =
+        demande.numero.replace(
+          /[^a-zA-Z0-9_-]/g,
+          "_"
+        );
+
+      res.setHeader(
+        "Content-Type",
+        "application/pdf"
+      );
+
+      res.setHeader(
+        "Content-Disposition",
+        `inline; filename="demande-service-${safeNumero}.pdf"`
+      );
+
+      res.setHeader(
+        "Content-Length",
+        String(
+          pdfBuffer.length
+        )
+      );
+
+      return res.send(
+        pdfBuffer
       );
     } catch (error) {
       next(error);

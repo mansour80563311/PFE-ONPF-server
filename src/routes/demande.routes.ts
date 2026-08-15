@@ -45,16 +45,6 @@ router.use(authMiddleware);
  * PAIEMENT D’UNE DEMANDE
  */
 
-/*
- * Enregistrer le paiement total
- * d’une demande.
- *
- * POST /api/demandes/:demandeId/paiement
- *
- * Accès :
- * - Administrateur ;
- * - Caissier.
- */
 router.post(
   "/:demandeId/paiement",
   roleMiddleware(
@@ -66,18 +56,6 @@ router.post(
   )
 );
 
-/*
- * Consulter le paiement associé
- * à une demande.
- *
- * GET /api/demandes/:demandeId/paiement
- *
- * Le service vérifie ensuite les droits :
- * - l’Administrateur voit tous les paiements ;
- * - le Caissier voit les paiements ;
- * - l’Agent voit uniquement ceux de ses demandes ;
- * - le Responsable voit ceux des demandes transmises.
- */
 router.get(
   "/:demandeId/paiement",
   roleMiddleware(
@@ -95,8 +73,6 @@ router.get(
  * DOCUMENTS
  */
 
-// Ajouter une pièce justificative :
-// Administrateur ou Agent uniquement
 router.post(
   "/:id/documents",
   roleMiddleware(
@@ -111,8 +87,6 @@ router.post(
   )
 );
 
-// Lister les pièces justificatives :
-// tous les utilisateurs authentifiés
 router.get(
   "/:id/documents",
   demandeDocumentController.findAll.bind(
@@ -120,8 +94,6 @@ router.get(
   )
 );
 
-// Télécharger un document :
-// tous les utilisateurs authentifiés
 router.get(
   "/:id/documents/:documentId/download",
   demandeDocumentController.download.bind(
@@ -129,8 +101,6 @@ router.get(
   )
 );
 
-// Supprimer un document :
-// Administrateur ou Agent uniquement
 router.delete(
   "/:id/documents/:documentId",
   roleMiddleware(
@@ -142,8 +112,6 @@ router.delete(
   )
 );
 
-// Vérifier la conformité d’une pièce :
-// Administrateur ou Responsable uniquement
 router.patch(
   "/:id/documents/:documentId/status",
   roleMiddleware(
@@ -159,7 +127,6 @@ router.patch(
  * DEMANDES
  */
 
-// Liste des demandes
 router.get(
   "/",
   demandeController.findAll.bind(
@@ -167,7 +134,6 @@ router.get(
   )
 );
 
-// Historique d’une demande
 router.get(
   "/:id/history",
   demandeController.findHistory.bind(
@@ -175,7 +141,28 @@ router.get(
   )
 );
 
-// Création d’une demande
+/*
+ * Récapitulatif imprimable avant paiement.
+ *
+ * Le backend vérifie :
+ * - que l'utilisateur est ADMIN ou AGENT ;
+ * - les droits d'accès à la demande ;
+ * - que la demande est encore EN_ATTENTE ;
+ * - que CIN/passeport, contrat et procuration
+ *   sont présents.
+ */
+router.get(
+  "/:id/recapitulatif",
+  roleMiddleware(
+    "ADMIN",
+    "AGENT"
+  ),
+  demandeController
+    .generateRecapitulatif.bind(
+      demandeController
+    )
+);
+
 router.post(
   "/",
   roleMiddleware(
@@ -187,8 +174,6 @@ router.post(
   )
 );
 
-// Vérifier ou régulariser l’identité CNI :
-// Administrateur ou Agent propriétaire
 router.patch(
   "/:id/verifier-cni",
   roleMiddleware(
@@ -200,7 +185,6 @@ router.patch(
   )
 );
 
-// Mise à jour du statut
 router.patch(
   "/:id/status",
   roleMiddleware(
@@ -213,7 +197,6 @@ router.patch(
   )
 );
 
-// Consulter une demande
 router.get(
   "/:id",
   demandeController.findById.bind(
@@ -221,7 +204,6 @@ router.get(
   )
 );
 
-// Modifier une demande
 router.put(
   "/:id",
   roleMiddleware(
@@ -233,7 +215,6 @@ router.put(
   )
 );
 
-// Supprimer une demande
 router.delete(
   "/:id",
   roleMiddleware(
