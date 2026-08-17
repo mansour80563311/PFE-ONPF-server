@@ -26,8 +26,7 @@ const caissierPublicSelect = {
 } satisfies Prisma.UtilisateurSelect;
 
 /*
- * Informations d’un paiement affichées
- * dans le détail du journal de caisse.
+ * Paiement initial affiché dans le journal.
  */
 const paiementJournalSelect = {
   id: true,
@@ -55,6 +54,46 @@ const paiementJournalSelect = {
   },
 } satisfies Prisma.PaiementSelect;
 
+/*
+ * Paiement complémentaire affiché dans le journal.
+ */
+const paiementComplementaireJournalSelect = {
+  id: true,
+  numeroRecu: true,
+
+  montantExigible: true,
+  montantRemis: true,
+  monnaieRendue: true,
+  montantEncaisse: true,
+
+  modePaiement: true,
+  statut: true,
+  datePaiement: true,
+  observations: true,
+
+  demande: {
+    select: {
+      id: true,
+      numero: true,
+      nomDemandeur: true,
+      prenomDemandeur: true,
+      cin: true,
+      referenceFonciere: true,
+    },
+  },
+
+  revision: {
+    select: {
+      id: true,
+      numeroRevision: true,
+      montantAvant: true,
+      montantApres: true,
+      complementDu: true,
+      statut: true,
+    },
+  },
+} satisfies Prisma.PaiementComplementaireSelect;
+
 export class JournalCaisseRepository {
   /**
    * Recherche le journal d’un Caissier
@@ -81,6 +120,8 @@ export class JournalCaisseRepository {
         _count: {
           select: {
             paiements: true,
+            paiementsComplementaires:
+              true,
           },
         },
       },
@@ -90,9 +131,6 @@ export class JournalCaisseRepository {
   /**
    * Recherche le dernier numéro de journal
    * créé pour une année.
-   *
-   * Exemple :
-   * JC-2026-000001
    */
   async findLastNumero(
     year: number
@@ -135,6 +173,8 @@ export class JournalCaisseRepository {
         _count: {
           select: {
             paiements: true,
+            paiementsComplementaires:
+              true,
           },
         },
       },
@@ -143,7 +183,8 @@ export class JournalCaisseRepository {
 
   /**
    * Recherche un journal avec tous
-   * ses paiements.
+   * ses encaissements : paiements initiaux
+   * et compléments.
    */
   async findById(
     id: string
@@ -169,9 +210,21 @@ export class JournalCaisseRepository {
           },
         },
 
+        paiementsComplementaires: {
+          select:
+            paiementComplementaireJournalSelect,
+
+          orderBy: {
+            datePaiement:
+              "asc",
+          },
+        },
+
         _count: {
           select: {
             paiements: true,
+            paiementsComplementaires:
+              true,
           },
         },
       },
@@ -180,15 +233,6 @@ export class JournalCaisseRepository {
 
   /**
    * Liste paginée des journaux.
-   *
-   * Le filtre d’accès sera construit dans
-   * le service :
-   *
-   * CAISSIER :
-   * uniquement ses propres journaux.
-   *
-   * ADMIN et RESPONSABLE :
-   * tous les journaux.
    */
   async findAll(
     page: number,
@@ -232,6 +276,8 @@ export class JournalCaisseRepository {
           _count: {
             select: {
               paiements: true,
+              paiementsComplementaires:
+                true,
             },
           },
         },
@@ -257,18 +303,19 @@ export class JournalCaisseRepository {
   }
 
   /**
-   * Calcule les totaux financiers
-   * d’un journal.
+   * Calcule les totaux financiers du journal.
    *
-   * Seuls les paiements au statut PAYE
-   * sont pris en compte.
+   * Les encaissements initiaux ET les compléments
+   * au statut PAYE sont comptabilisés.
    */
   async getTotals(
     journalCaisseId: string
   ) {
     const [
-      aggregate,
-      nombrePaiements,
+      initialAggregate,
+      initialCount,
+      complementAggregate,
+      complementCount,
     ] = await Promise.all([
       prisma.paiement.aggregate({
         where: {
@@ -301,34 +348,123 @@ export class JournalCaisseRepository {
             StatutPaiement.PAYE,
         },
       }),
+
+      prisma.paiementComplementaire
+        .aggregate({
+          where: {
+            journalCaisseId,
+
+            statut:
+              StatutPaiement.PAYE,
+          },
+
+          _sum: {
+            montantExigible:
+              true,
+
+            montantRemis:
+              true,
+
+            monnaieRendue:
+              true,
+
+            montantEncaisse:
+              true,
+          },
+        }),
+
+      prisma.paiementComplementaire
+        .count({
+          where: {
+            journalCaisseId,
+
+            statut:
+              StatutPaiement.PAYE,
+          },
+        }),
     ]);
 
+    const zero =
+      new Prisma.Decimal(0);
+
+    const initialExigible =
+      initialAggregate
+        ._sum
+        .montantExigible ??
+      zero;
+
+    const complementExigible =
+      complementAggregate
+        ._sum
+        .montantExigible ??
+      zero;
+
+    const initialRemis =
+      initialAggregate
+        ._sum
+        .montantRemis ??
+      zero;
+
+    const complementRemis =
+      complementAggregate
+        ._sum
+        .montantRemis ??
+      zero;
+
+    const initialMonnaie =
+      initialAggregate
+        ._sum
+        .monnaieRendue ??
+      zero;
+
+    const complementMonnaie =
+      complementAggregate
+        ._sum
+        .monnaieRendue ??
+      zero;
+
+    const initialEncaisse =
+      initialAggregate
+        ._sum
+        .montantEncaisse ??
+      zero;
+
+    const complementEncaisse =
+      complementAggregate
+        ._sum
+        .montantEncaisse ??
+      zero;
+
     return {
-      nombrePaiements,
+      nombrePaiementsInitiaux:
+        initialCount,
+
+      nombrePaiementsComplementaires:
+        complementCount,
+
+      nombrePaiements:
+        initialCount +
+        complementCount,
 
       montantTotalExigible:
-        aggregate
-          ._sum
-          .montantExigible ??
-        new Prisma.Decimal(0),
+        initialExigible.plus(
+          complementExigible
+        ),
 
       montantTotalRemis:
-        aggregate
-          ._sum
-          .montantRemis ??
-        new Prisma.Decimal(0),
+        initialRemis.plus(
+          complementRemis
+        ),
 
       monnaieTotaleRendue:
-        aggregate
-          ._sum
-          .monnaieRendue ??
-        new Prisma.Decimal(0),
+        initialMonnaie.plus(
+          complementMonnaie
+        ),
 
       montantTotalEncaisse:
-        aggregate
-          ._sum
-          .montantEncaisse ??
-        new Prisma.Decimal(0),
+        initialEncaisse.plus(
+          complementEncaisse
+        ),
     };
   }
 
@@ -365,6 +501,8 @@ export class JournalCaisseRepository {
         _count: {
           select: {
             paiements: true,
+            paiementsComplementaires:
+              true,
           },
         },
       },

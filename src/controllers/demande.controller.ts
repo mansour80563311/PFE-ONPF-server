@@ -17,6 +17,10 @@ import {
 } from "../services/recapitulatif-demande.service";
 
 import {
+  ResponsableDemandeService,
+} from "../services/responsable-demande.service";
+
+import {
   ApiResponse,
 } from "../utils/ApiResponse";
 
@@ -26,6 +30,10 @@ import {
   updateDemandeSchema,
   updateDemandeStatusSchema,
 } from "../validations/demande.validation";
+
+import {
+  corrigerDemandeResponsableSchema,
+} from "../validations/responsable-demande.validation";
 
 type DemandeParams = {
   id: string;
@@ -40,6 +48,9 @@ export class DemandeController {
 
   private recapitulatifDemandeService =
     new RecapitulatifDemandeService();
+
+  private responsableDemandeService =
+    new ResponsableDemandeService();
 
   async findAll(
     req: Request,
@@ -152,6 +163,48 @@ export class DemandeController {
 
       return res.send(
         pdfBuffer
+      );
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Correction métier d'une demande déjà payée
+   * pendant le contrôle du Responsable Guichet.
+   *
+   * Le service conserve le paiement initial et
+   * la tarification initiale figée. Une éventuelle
+   * hausse est enregistrée sous forme de complément.
+   */
+  async corrigerParResponsable(
+    req: Request<DemandeParams>,
+    res: Response,
+    next: NextFunction
+  ) {
+    try {
+      const data =
+        corrigerDemandeResponsableSchema
+          .parse(req.body);
+
+      const result =
+        await this
+          .responsableDemandeService
+          .corrigerInscription(
+            req.params.id,
+            data,
+            req.user!.userId,
+            req.user!.role
+          );
+
+      return res.json(
+        ApiResponse.success(
+          result.resumeTarification
+            .complementRequis
+            ? "Correction enregistrée. Un complément de paiement est requis."
+            : "Correction enregistrée sans complément de paiement.",
+          result
+        )
       );
     } catch (error) {
       next(error);

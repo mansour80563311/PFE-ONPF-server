@@ -42,6 +42,12 @@ model Utilisateur {
   journauxCloture     JournalCloture[]
   paiementsEncaisses  Paiement[]
 
+  // Corrections effectuées par le Responsable Guichet.
+  revisionsDemandes RevisionDemande[] @relation("RevisionDemandeResponsable")
+
+  // Compléments encaissés par le caissier.
+  paiementsComplementairesEncaisses PaiementComplementaire[] @relation("PaiementComplementaireCaissier")
+
   journauxCaisse JournalCaisse[] @relation("JournalCaisseCaissier")
 
   createdAt DateTime @default(now())
@@ -116,6 +122,13 @@ enum CategorieOperationFonciere {
 enum StatutTarification {
   CALCULEE
   FIGEE
+}
+
+// Etat d'une révision effectuée par le Responsable Guichet.
+enum StatutRevisionDemande {
+  SANS_COMPLEMENT
+  COMPLEMENT_A_PAYER
+  COMPLEMENT_PAYE
 }
 
 enum TypeLigneTarification {
@@ -414,6 +427,12 @@ model Demande {
   documentsTeleverses DemandeDocument[]
   paiement            Paiement?
 
+  // Historique des corrections réalisées après le paiement initial.
+  revisions RevisionDemande[]
+
+  // Compléments éventuellement encaissés pour cette demande.
+  paiementsComplementaires PaiementComplementaire[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -492,6 +511,138 @@ model LigneTarification {
 
   @@index([tarificationId])
   @@index([type])
+}
+
+// ============================================================
+// REVISIONS EFFECTUEES PAR LE RESPONSABLE GUICHET
+// ============================================================
+
+/**
+ * Une révision représente une correction effectuée par le
+ * Responsable Guichet après le paiement initial.
+ * Le snapshot tarifaire initial reste FIGE et n'est jamais
+ * écrasé. La révision conserve donc :
+ * - les données avant/après correction ;
+ * - le montant avant/après recalcul ;
+ * - le complément éventuel ;
+ * - les lignes du nouveau calcul tarifaire.
+ */
+model RevisionDemande {
+  id String @id @default(uuid())
+
+  demandeId String
+  demande   Demande @relation(fields: [demandeId], references: [id], onDelete: Cascade)
+
+  // Numéro séquentiel propre à la demande : 1, 2, 3...
+  numeroRevision Int
+
+  responsableId String
+  responsable   Utilisateur @relation("RevisionDemandeResponsable", fields: [responsableId], references: [id], onDelete: Restrict)
+
+  // Snapshot des informations métier avant et après correction.
+  donneesAvant Json
+  donneesApres Json
+
+  // Justification ou commentaire de la correction.
+  motif String?
+
+  // Tarification de référence avant et après la correction.
+  montantAvant Decimal @db.Decimal(10, 3)
+  montantApres Decimal @db.Decimal(10, 3)
+
+  // Toujours >= 0. Une baisse tarifaire sera bloquée côté service
+  // tant qu'aucune règle métier de remboursement n'est définie.
+  complementDu Decimal @default(0.000) @db.Decimal(10, 3)
+
+  referenceReglementaire String?
+
+  statut StatutRevisionDemande @default(SANS_COMPLEMENT)
+
+  lignes LigneRevisionTarification[]
+
+  paiementComplementaire PaiementComplementaire?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([demandeId, numeroRevision])
+  @@index([demandeId])
+  @@index([responsableId])
+  @@index([statut])
+  @@index([createdAt])
+}
+
+// ============================================================
+// LIGNES DE TARIFICATION D'UNE REVISION
+// ============================================================
+
+model LigneRevisionTarification {
+  id String @id @default(uuid())
+
+  revisionId String
+  revision   RevisionDemande @relation(fields: [revisionId], references: [id], onDelete: Cascade)
+
+  type TypeLigneTarification
+
+  code     String?
+  libelle  String
+  quantite Int     @default(1)
+
+  montantUnitaire Decimal @db.Decimal(10, 3)
+  montant         Decimal @db.Decimal(10, 3)
+
+  ordre Int @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@index([revisionId])
+  @@index([type])
+}
+
+// ============================================================
+// PAIEMENT COMPLEMENTAIRE
+// ============================================================
+
+/**
+ * Un complément est un encaissement distinct du paiement initial.
+ * Le paiement initial reste donc inchangé et conserve son reçu.
+ */
+model PaiementComplementaire {
+  id         String @id @default(uuid())
+  numeroRecu String @unique
+
+  montantExigible Decimal @db.Decimal(10, 3)
+  montantRemis    Decimal @db.Decimal(10, 3)
+  monnaieRendue   Decimal @default(0.000) @db.Decimal(10, 3)
+  montantEncaisse Decimal @db.Decimal(10, 3)
+
+  modePaiement ModePaiement   @default(ESPECES)
+  statut       StatutPaiement @default(PAYE)
+
+  montantEnLettres String?
+  observations     String?
+  datePaiement     DateTime @default(now())
+
+  demandeId String
+  demande   Demande @relation(fields: [demandeId], references: [id], onDelete: Restrict)
+
+  // Une révision tarifaire ne peut être réglée qu'une seule fois.
+  revisionId String          @unique
+  revision   RevisionDemande @relation(fields: [revisionId], references: [id], onDelete: Restrict)
+
+  caissierId String
+  caissier   Utilisateur @relation("PaiementComplementaireCaissier", fields: [caissierId], references: [id], onDelete: Restrict)
+
+  journalCaisseId String?
+  journalCaisse   JournalCaisse? @relation(fields: [journalCaisseId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([demandeId])
+  @@index([caissierId])
+  @@index([journalCaisseId])
+  @@index([datePaiement])
 }
 
 // ============================================================
@@ -592,6 +743,9 @@ model JournalCaisse {
   caissier   Utilisateur @relation("JournalCaisseCaissier", fields: [caissierId], references: [id], onDelete: Restrict)
 
   paiements Paiement[]
+
+  // Encaissements complémentaires liés aux corrections du Responsable.
+  paiementsComplementaires PaiementComplementaire[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
