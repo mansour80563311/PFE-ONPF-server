@@ -2529,18 +2529,34 @@ export class DemandeService {
       );
     }
 
+    /*
+     * Nouveau workflow du guichet :
+     * - le Responsable Guichet valide les dossiers ;
+     * - il ne rejette plus les demandes ;
+     * - l'Administrateur conserve pour le moment son
+     *   droit exceptionnel de rejet.
+     */
     if (
-      (
-        nouveauStatut ===
-          StatutDemande.VALIDEE ||
-        nouveauStatut ===
-          StatutDemande.REJETEE
-      ) &&
+      nouveauStatut ===
+        StatutDemande.VALIDEE &&
       !isAdmin &&
       !isResponsable
     ) {
       throw new AppError(
-        "Seul un responsable peut valider ou rejeter une demande.",
+        "Seul un responsable peut valider une demande.",
+        403
+      );
+    }
+
+    if (
+      nouveauStatut ===
+        StatutDemande.REJETEE &&
+      !isAdmin
+    ) {
+      throw new AppError(
+        isResponsable
+          ? "Le Responsable Guichet ne peut pas rejeter une demande. Il doit contrôler puis valider le dossier avant la clôture du guichet."
+          : "Seul un administrateur peut rejeter une demande.",
         403
       );
     }
@@ -2575,15 +2591,16 @@ export class DemandeService {
     }
 
     /*
-     * Le paiement doit être confirmé avant :
+     * Le paiement initial doit être confirmé avant :
      * - la transmission au Responsable ;
-     * - la validation de la demande ;
-     * - le rejet de la demande.
+     * - la validation au niveau du guichet ;
+     * - un éventuel rejet administratif exceptionnel.
      *
-     * Le contrôle sur VALIDEE et REJETEE
-     * protège également les anciennes
-     * demandes qui auraient été transmises
-     * avant l’intégration de la caisse.
+     * Important : un complément créé après une correction
+     * du Responsable peut rester à payer. Il constitue une
+     * dette et ne bloque pas la validation du dossier ni la
+     * poursuite vers le service Étude. Son règlement sera
+     * exigé avant la délivrance finale du certificat.
      */
     const paiementObligatoire =
       nouveauStatut ===

@@ -25,6 +25,12 @@ export class JournalClotureService {
   /**
    * Protection complémentaire au
    * roleMiddleware des routes.
+   *
+   * Le Responsable assure normalement
+   * la clôture du guichet.
+   *
+   * L'Administrateur conserve pour le
+   * moment son droit de supervision.
    */
   private assertCanAccessJournaux(
     role: string
@@ -227,6 +233,13 @@ export class JournalClotureService {
     return `${JournalClotureService.PREFIX}-${year}-${nextNumber}`;
   }
 
+  /**
+   * Prévisualise les demandes validées au
+   * niveau du guichet pendant la journée.
+   *
+   * Une demande déjà rattachée à un journal
+   * ne peut plus être sélectionnée.
+   */
   async preview(
     dateJour: string,
     role: string
@@ -263,6 +276,19 @@ export class JournalClotureService {
       );
   }
 
+  /**
+   * Clôture la journée du guichet.
+   *
+   * Toutes les demandes validées au niveau
+   * du guichet pendant cette journée et
+   * encore non clôturées sont rattachées au
+   * même journal.
+   *
+   * Le complément de paiement éventuel
+   * n'intervient pas dans l'éligibilité :
+   * une dette peut rester à régler avant
+   * la délivrance finale du résultat.
+   */
   async create(
     data: CreateJournalClotureDto,
     responsableId: string,
@@ -304,7 +330,7 @@ export class JournalClotureService {
       demandes.length === 0
     ) {
       throw new AppError(
-        "Aucune demande finalisée n’est disponible pour cette journée.",
+        "Aucune demande validée au niveau du guichet n’est disponible pour cette journée.",
         400
       );
     }

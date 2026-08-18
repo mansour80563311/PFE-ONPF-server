@@ -44,6 +44,18 @@ export class JournalClotureRepository {
     });
   }
 
+  /**
+   * Retourne uniquement les demandes :
+   *
+   * - validées au niveau du guichet ;
+   * - non encore rattachées à un journal ;
+   * - dont la validation a été réalisée
+   *   pendant la journée sélectionnée.
+   *
+   * Les anciennes demandes REJETEE ne font
+   * plus partie du workflow de clôture du
+   * Responsable Guichet.
+   */
   async findEligibleDemandes(
     startDate: Date,
     endDate: Date
@@ -52,21 +64,13 @@ export class JournalClotureRepository {
       where: {
         journalClotureId: null,
 
-        statut: {
-          in: [
-            StatutDemande.VALIDEE,
-            StatutDemande.REJETEE,
-          ],
-        },
+        statut:
+          StatutDemande.VALIDEE,
 
         historiqueStatuts: {
           some: {
-            nouveauStatut: {
-              in: [
-                StatutDemande.VALIDEE,
-                StatutDemande.REJETEE,
-              ],
-            },
+            nouveauStatut:
+              StatutDemande.VALIDEE,
 
             createdAt: {
               gte: startDate,
@@ -86,7 +90,37 @@ export class JournalClotureRepository {
         nomDemandeur: true,
         prenomDemandeur: true,
         cin: true,
+
+        // Nouveau modèle métier.
+        nature: true,
+
+        titreFoncier: {
+          select: {
+            numero: true,
+
+            gouvernorat: {
+              select: {
+                id: true,
+                code: true,
+                nom: true,
+              },
+            },
+          },
+        },
+
+        prestation: {
+          select: {
+            id: true,
+            code: true,
+            libelle: true,
+          },
+        },
+
+        // Conservé temporairement pour les
+        // anciennes demandes créées avant la
+        // migration du modèle métier.
         referenceFonciere: true,
+
         statut: true,
         updatedAt: true,
       },
@@ -316,7 +350,37 @@ export class JournalClotureRepository {
             nomDemandeur: true,
             prenomDemandeur: true,
             cin: true,
+
+            // Nouveau modèle métier.
+            nature: true,
+
+            titreFoncier: {
+              select: {
+                numero: true,
+
+                gouvernorat: {
+                  select: {
+                    id: true,
+                    code: true,
+                    nom: true,
+                  },
+                },
+              },
+            },
+
+            prestation: {
+              select: {
+                id: true,
+                code: true,
+                libelle: true,
+              },
+            },
+
+            // Champ historique conservé pour
+            // afficher correctement les dossiers
+            // issus de l'ancien modèle.
             referenceFonciere: true,
+
             statut: true,
             motifRejet: true,
             updatedAt: true,
