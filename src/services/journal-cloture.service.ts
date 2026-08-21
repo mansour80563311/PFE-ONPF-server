@@ -1,5 +1,6 @@
 import {
   Prisma,
+  StatutJournalCloture,
 } from "@prisma/client";
 
 import {
@@ -12,6 +13,7 @@ import {
 
 import type {
   CreateJournalClotureDto,
+  DeclotureJournalClotureDto,
   ListJournauxClotureDto,
 } from "../validations/journal-cloture.validation";
 
@@ -22,16 +24,6 @@ export class JournalClotureService {
   private journalRepository =
     new JournalClotureRepository();
 
-  /**
-   * Protection complémentaire au
-   * roleMiddleware des routes.
-   *
-   * Le Responsable assure normalement
-   * la clôture du guichet.
-   *
-   * L'Administrateur conserve pour le
-   * moment son droit de supervision.
-   */
   private assertCanAccessJournaux(
     role: string
   ): void {
@@ -48,12 +40,20 @@ export class JournalClotureService {
     );
   }
 
-  /**
-   * Retourne la date actuelle en Tunisie
-   * au format YYYY-MM-DD.
-   */
-  private getTodayInTunisia():
-    string {
+  private assertCanDecloture(
+    role: string
+  ): void {
+    if (role === "ADMIN") {
+      return;
+    }
+
+    throw new AppError(
+      "Seul l’Administrateur peut déclôturer exceptionnellement une journée du guichet.",
+      403
+    );
+  }
+
+  private getTodayInTunisia(): string {
     const parts =
       new Intl.DateTimeFormat(
         "en-US",
@@ -99,11 +99,25 @@ export class JournalClotureService {
     return `${year}-${month}-${day}`;
   }
 
-  /**
-   * Vérifie strictement la date puis calcule
-   * les bornes correspondant à la journée
-   * administrative tunisienne UTC+1.
-   */
+  private formatDatabaseDate(
+    date: Date
+  ): string {
+    const year =
+      date.getUTCFullYear();
+
+    const month =
+      String(
+        date.getUTCMonth() + 1
+      ).padStart(2, "0");
+
+    const day =
+      String(
+        date.getUTCDate()
+      ).padStart(2, "0");
+
+    return `${year}-${month}-${day}`;
+  }
+
   private getDateRange(
     dateJour: string
   ) {
@@ -128,10 +142,6 @@ export class JournalClotureService {
     const day =
       Number(match[3]);
 
-    /*
-     * La colonne PostgreSQL dateJour est
-     * enregistrée comme une DATE à minuit UTC.
-     */
     const databaseDate =
       new Date(
         Date.UTC(
@@ -141,11 +151,6 @@ export class JournalClotureService {
         )
       );
 
-    /*
-     * Empêche les dates telles que
-     * 2026-02-31 d’être automatiquement
-     * transformées en une date de mars.
-     */
     const isValidCalendarDate =
       databaseDate.getUTCFullYear() ===
         year &&
@@ -172,8 +177,9 @@ export class JournalClotureService {
     }
 
     /*
-     * Minuit en Tunisie correspond à
-     * 23 heures UTC la veille.
+     * Africa/Tunis est actuellement UTC+1.
+     * La journée administrative 00:00-24:00
+     * correspond donc à 23:00-23:00 UTC.
      */
     const startDate =
       new Date(
@@ -192,6 +198,37 @@ export class JournalClotureService {
       endDate,
       databaseDate,
     };
+  }
+
+  private async assertNoDemandeEnCours(
+    startDate: Date,
+    endDate: Date
+  ): Promise<void> {
+    const demandesEnCours =
+      await this.journalRepository
+        .findDemandesEnCoursForDay(
+          startDate,
+          endDate
+        );
+
+    if (
+      demandesEnCours.length === 0
+    ) {
+      return;
+    }
+
+    const numeros =
+      demandesEnCours
+        .map(
+          (demande) =>
+            demande.numero
+        )
+        .join(", ");
+
+    throw new AppError(
+      `La journée ne peut pas être clôturée : ${demandesEnCours.length} demande(s) sont encore en cours de contrôle au guichet (${numeros}). Toutes les demandes transmises au Responsable doivent être validées avant la clôture.`,
+      409
+    );
   }
 
   private async generateNumero(
@@ -233,13 +270,6 @@ export class JournalClotureService {
     return `${JournalClotureService.PREFIX}-${year}-${nextNumber}`;
   }
 
-  /**
-   * Prévisualise les demandes validées au
-   * niveau du guichet pendant la journée.
-   *
-   * Une demande déjà rattachée à un journal
-   * ne peut plus être sélectionnée.
-   */
   async preview(
     dateJour: string,
     role: string
@@ -262,12 +292,20 @@ export class JournalClotureService {
           databaseDate
         );
 
-    if (existingJournal) {
+    if (
+      existingJournal?.statut ===
+      StatutJournalCloture.CLOTURE
+    ) {
       throw new AppError(
         "Cette journée a déjà été clôturée.",
         409
       );
     }
+
+    await this.assertNoDemandeEnCours(
+      startDate,
+      endDate
+    );
 
     return this.journalRepository
       .findEligibleDemandes(
@@ -276,19 +314,6 @@ export class JournalClotureService {
       );
   }
 
-  /**
-   * Clôture la journée du guichet.
-   *
-   * Toutes les demandes validées au niveau
-   * du guichet pendant cette journée et
-   * encore non clôturées sont rattachées au
-   * même journal.
-   *
-   * Le complément de paiement éventuel
-   * n'intervient pas dans l'éligibilité :
-   * une dette peut rester à régler avant
-   * la délivrance finale du résultat.
-   */
   async create(
     data: CreateJournalClotureDto,
     responsableId: string,
@@ -312,12 +337,20 @@ export class JournalClotureService {
           databaseDate
         );
 
-    if (existingJournal) {
+    if (
+      existingJournal?.statut ===
+      StatutJournalCloture.CLOTURE
+    ) {
       throw new AppError(
         "Cette journée a déjà été clôturée.",
         409
       );
     }
+
+    await this.assertNoDemandeEnCours(
+      startDate,
+      endDate
+    );
 
     const demandes =
       await this.journalRepository
@@ -325,6 +358,47 @@ export class JournalClotureService {
           startDate,
           endDate
         );
+
+    const observations =
+      data.observations
+        ?.trim() || null;
+
+    /*
+     * Une journée précédemment déclôturée est reclôturée
+     * dans le même journal. Les anciennes demandes restent
+     * rattachées et les nouvelles demandes validées sont ajoutées.
+     */
+    if (
+      existingJournal?.statut ===
+      StatutJournalCloture.DECLOTUREE
+    ) {
+      const alreadyLinkedCount =
+        existingJournal._count
+          .demandes;
+
+      if (
+        alreadyLinkedCount === 0 &&
+        demandes.length === 0
+      ) {
+        throw new AppError(
+          "Aucune demande validée au niveau du guichet n’est disponible pour cette journée.",
+          400
+        );
+      }
+
+      return this.journalRepository
+        .recloseWithDemandes({
+          journalId:
+            existingJournal.id,
+          responsableId,
+          observations,
+          demandeIds:
+            demandes.map(
+              (demande) =>
+                demande.id
+            ),
+        });
+    }
 
     if (
       demandes.length === 0
@@ -352,11 +426,7 @@ export class JournalClotureService {
           dateJour:
             databaseDate,
           responsableId,
-
-          observations:
-            data.observations
-              ?.trim() || null,
-
+          observations,
           demandeIds:
             demandes.map(
               (demande) =>
@@ -364,12 +434,6 @@ export class JournalClotureService {
             ),
         });
     } catch (error) {
-      /*
-       * Cette erreur peut apparaître lorsque
-       * deux utilisateurs tentent de clôturer
-       * la même journée simultanément ou
-       * génèrent le même numéro.
-       */
       if (
         error instanceof
           Prisma.PrismaClientKnownRequestError &&
@@ -383,6 +447,66 @@ export class JournalClotureService {
 
       throw error;
     }
+  }
+
+  async decloture(
+    id: string,
+    data: DeclotureJournalClotureDto,
+    adminId: string,
+    role: string
+  ) {
+    this.assertCanDecloture(
+      role
+    );
+
+    const journal =
+      await this.journalRepository
+        .findById(id);
+
+    if (!journal) {
+      throw new AppError(
+        "Journal de clôture introuvable.",
+        404
+      );
+    }
+
+    if (
+      journal.statut !==
+      StatutJournalCloture.CLOTURE
+    ) {
+      throw new AppError(
+        "Cette journée est déjà déclôturée.",
+        409
+      );
+    }
+
+    const journalDate =
+      this.formatDatabaseDate(
+        journal.dateJour
+      );
+
+    const today =
+      this.getTodayInTunisia();
+
+    if (journalDate !== today) {
+      throw new AppError(
+        "La déclôture est autorisée uniquement le même jour administratif que la clôture.",
+        409
+      );
+    }
+
+    /*
+     * Le module Service Étude n'est pas encore développé.
+     * Quand il existera, une vérification supplémentaire devra
+     * interdire la déclôture si l'étude d'un dossier a commencé.
+     */
+    return this.journalRepository
+      .decloture({
+        journalId: id,
+        adminId,
+        motif:
+          data.motif.trim(),
+      });
   }
 
   async findAll(
@@ -415,13 +539,10 @@ export class JournalClotureService {
       meta: {
         total:
           result.total,
-
         page:
           result.page,
-
         limit:
           result.limit,
-
         totalPages:
           result.totalPages,
       },

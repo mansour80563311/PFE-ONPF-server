@@ -37,10 +37,11 @@ model Utilisateur {
 
   demandes Demande[]
 
-  historiqueStatuts   HistoriqueStatutDemande[]
-  documentsTeleverses DemandeDocument[]
-  journauxCloture     JournalCloture[]
-  paiementsEncaisses  Paiement[]
+  historiqueStatuts         HistoriqueStatutDemande[]
+  documentsTeleverses       DemandeDocument[]
+  journauxCloture           JournalCloture[]
+  evenementsJournauxCloture JournalClotureEvenement[] @relation("JournalClotureEvenementAuteur")
+  paiementsEncaisses        Paiement[]
 
   // Corrections effectuées par le Responsable Guichet.
   revisionsDemandes RevisionDemande[] @relation("RevisionDemandeResponsable")
@@ -103,6 +104,19 @@ enum StatutPaiement {
 enum StatutJournalCaisse {
   OUVERT
   CLOTURE
+}
+
+// Etat courant d'un journal de clôture du guichet.
+// Une journée déclôturée reste historisée : le journal n'est jamais supprimé.
+enum StatutJournalCloture {
+  CLOTURE
+  DECLOTUREE
+}
+
+// Historique des fermetures / réouvertures administratives du guichet.
+enum TypeEvenementJournalCloture {
+  CLOTURE
+  DECLOTURE
 }
 
 // ============================================================
@@ -707,8 +721,14 @@ model JournalCloture {
   id     String @id @default(uuid())
   numero String @unique
 
-  dateJour    DateTime @unique @db.Date
+  dateJour DateTime @unique @db.Date
+
+  // Date de la clôture actuellement active.
+  // Lors d'une éventuelle reclôture le même jour, cette date sera actualisée.
+  // L'historique complet reste conservé dans JournalClotureEvenement.
   dateCloture DateTime @default(now())
+
+  statut StatutJournalCloture @default(CLOTURE)
 
   observations String?
 
@@ -717,10 +737,41 @@ model JournalCloture {
 
   demandes Demande[]
 
+  // Historique immuable des clôtures et déclôtures.
+  evenements JournalClotureEvenement[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([responsableId])
+  @@index([statut])
+}
+
+model JournalClotureEvenement {
+  id String @id @default(uuid())
+
+  journalClotureId String
+  journalCloture   JournalCloture @relation(fields: [journalClotureId], references: [id], onDelete: Restrict)
+
+  type TypeEvenementJournalCloture
+
+  // Auteur de l'événement : Responsable/Admin pour une clôture,
+  // ADMIN uniquement pour une déclôture.
+  auteurId String
+  auteur   Utilisateur @relation("JournalClotureEvenementAuteur", fields: [auteurId], references: [id], onDelete: Restrict)
+
+  // Obligatoire fonctionnellement pour une déclôture.
+  // Le contrôle sera assuré par le service backend.
+  motif String?
+
+  dateEvenement DateTime @default(now())
+
+  createdAt DateTime @default(now())
+
+  @@index([journalClotureId])
+  @@index([auteurId])
+  @@index([type])
+  @@index([dateEvenement])
 }
 
 // ============================================================

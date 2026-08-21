@@ -17,6 +17,10 @@ import { PaiementRepository } from "../repositories/paiement.repository";
 
 import { removeFileIfExists } from "../utils/file";
 
+import {
+  GuichetJourneeService,
+} from "./guichet-journee.service";
+
 interface UploadDocumentParams {
   demandeId: string;
   utilisateurId: string;
@@ -43,6 +47,9 @@ export class DemandeDocumentService {
    */
   private paiementRepository =
     new PaiementRepository();
+
+  private guichetJourneeService =
+    new GuichetJourneeService();
 
   /**
    * Contrôle l’accès en lecture aux documents
@@ -165,6 +172,9 @@ export class DemandeDocumentService {
           403
         );
       }
+
+      await this.guichetJourneeService
+        .assertJourneeOuverte();
 
       if (
         demande.statut !==
@@ -441,6 +451,9 @@ export class DemandeDocumentService {
       );
     }
 
+    await this.guichetJourneeService
+      .assertJourneeOuverte();
+
     if (
       demande.statut !==
       StatutDemande.EN_COURS
@@ -572,6 +585,9 @@ export class DemandeDocumentService {
         403
       );
     }
+
+    await this.guichetJourneeService
+      .assertJourneeOuverte();
 
     if (
       demande.statut !==

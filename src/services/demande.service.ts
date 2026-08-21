@@ -46,6 +46,10 @@ import {
   TarificationService,
 } from "./tarification.service";
 
+import {
+  GuichetJourneeService,
+} from "./guichet-journee.service";
+
 interface DemandeAccessData {
   utilisateurId: string;
   statut: StatutDemande;
@@ -82,6 +86,9 @@ export class DemandeService {
 
   private cniService =
     new CniService();
+
+  private guichetJourneeService =
+    new GuichetJourneeService();
 
   /**
    * Filtre appliqué à la liste des demandes
@@ -314,6 +321,15 @@ export class DemandeService {
           403
         );
       }
+
+      /*
+       * Une fois la journée du guichet clôturée, aucune nouvelle
+       * demande ne peut être créée pour cette journée.
+       * Le lendemain, l'absence de journal pour la nouvelle date
+       * administrative rouvre automatiquement les opérations.
+       */
+      await this.guichetJourneeService
+        .assertJourneeOuverte();
 
 
       const utilisateur =
@@ -1001,6 +1017,13 @@ export class DemandeService {
         403
       );
     }
+
+    /**
+     * Une journée clôturée interdit toute
+     * nouvelle modification métier du guichet.
+     */
+    await this.guichetJourneeService
+      .assertJourneeOuverte();
 
 
     /**
@@ -2375,6 +2398,15 @@ export class DemandeService {
         role
       );
 
+    /**
+     * La vérification CNI fait partie des
+     * opérations de constitution du dossier
+     * au guichet. Elle est donc interdite
+     * après la clôture de la journée.
+     */
+    await this.guichetJourneeService
+      .assertJourneeOuverte();
+
     if (
       demande.statut !==
       StatutDemande.EN_ATTENTE
@@ -2561,6 +2593,33 @@ export class DemandeService {
       );
     }
 
+    /*
+     * Une fois la journée du guichet clôturée, aucune
+     * nouvelle transition métier du service guichet
+     * n'est autorisée pour cette journée.
+     *
+     * Ce verrou couvre notamment :
+     * - EN_ATTENTE -> EN_COURS : transmission Agent ;
+     * - EN_COURS -> VALIDEE : validation Responsable ;
+     * - EN_COURS -> REJETEE : rejet administratif
+     *   exceptionnel encore conservé pour l'ADMIN.
+     *
+     * Le paiement complémentaire n'est pas concerné par
+     * ce contrôle : une dette existante peut être réglée
+     * ultérieurement avant la délivrance du résultat.
+     */
+    if (
+      nouveauStatut ===
+        StatutDemande.EN_COURS ||
+      nouveauStatut ===
+        StatutDemande.VALIDEE ||
+      nouveauStatut ===
+        StatutDemande.REJETEE
+    ) {
+      await this.guichetJourneeService
+        .assertJourneeOuverte();
+    }
+
     if (
       isAgent &&
       nouveauStatut ===
@@ -2740,6 +2799,13 @@ export class DemandeService {
         403
       );
     }
+
+    /**
+     * La suppression est une action métier du
+     * guichet et reste interdite après clôture.
+     */
+    await this.guichetJourneeService
+      .assertJourneeOuverte();
 
     if (
       demande.statut ===

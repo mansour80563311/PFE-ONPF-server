@@ -34,6 +34,10 @@ import {
   JournalCaisseService,
 } from "./journal-caisse.service";
 
+import {
+  GuichetJourneeService,
+} from "./guichet-journee.service";
+
 
 export class PaiementService {
   private static readonly PREFIX_RECU =
@@ -53,6 +57,9 @@ export class PaiementService {
 
   private journalCaisseService =
     new JournalCaisseService();
+
+  private guichetJourneeService =
+    new GuichetJourneeService();
 
 
   /**
@@ -253,6 +260,22 @@ export class PaiementService {
         403
       );
     }
+
+
+    /**
+     * ------------------------------------------------------
+     * VERROU DE LA JOURNEE DU GUICHET
+     * ------------------------------------------------------
+     *
+     * Après la clôture journalière, aucun nouveau paiement
+     * initial ne peut être encaissé pour cette journée.
+     *
+     * Le paiement complémentaire n'est pas concerné par ce
+     * verrou : il peut être réglé ultérieurement comme dette
+     * avant la délivrance du résultat.
+     */
+    await this.guichetJourneeService
+      .assertJourneeOuverte();
 
 
     /**

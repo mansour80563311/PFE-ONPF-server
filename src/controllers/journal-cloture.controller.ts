@@ -14,6 +14,7 @@ import {
 
 import {
   createJournalClotureSchema,
+  declotureJournalClotureSchema,
   listJournauxClotureSchema,
   previewJournalClotureSchema,
 } from "../validations/journal-cloture.validation";
@@ -84,6 +85,38 @@ export class JournalClotureController {
             journal
           )
         );
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async decloture(
+    req: Request<JournalParams>,
+    res: Response,
+    next: NextFunction
+  ) {
+    try {
+      const data =
+        declotureJournalClotureSchema
+          .parse(
+            req.body
+          );
+
+      const journal =
+        await this.journalService
+          .decloture(
+            req.params.id,
+            data,
+            req.user!.userId,
+            req.user!.role
+          );
+
+      return res.json(
+        ApiResponse.success(
+          "Journée du guichet déclôturée avec succès.",
+          journal
+        )
+      );
     } catch (error) {
       next(error);
     }

@@ -32,12 +32,29 @@ export const createJournalClotureSchema =
       .or(z.literal("")),
   });
 
+export const declotureJournalClotureSchema =
+  z.object({
+    motif: z
+      .string()
+      .trim()
+      .min(
+        5,
+        "Le motif de déclôture doit contenir au moins 5 caractères."
+      )
+      .max(
+        500,
+        "Le motif de déclôture ne peut pas dépasser 500 caractères."
+      ),
+  });
+
 export type PreviewJournalClotureDto =
   z.infer<typeof previewJournalClotureSchema>;
 
 export type CreateJournalClotureDto =
   z.infer<typeof createJournalClotureSchema>;
 
+export type DeclotureJournalClotureDto =
+  z.infer<typeof declotureJournalClotureSchema>;
 
 export const listJournauxClotureSchema =
   z.object({

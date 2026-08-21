@@ -11,7 +11,6 @@ const journalController =
 
 router.use(authMiddleware);
 
-// Prévisualiser une clôture
 router.get(
   "/preview",
   roleMiddleware(
@@ -23,7 +22,6 @@ router.get(
   )
 );
 
-// Lister les journaux
 router.get(
   "/",
   roleMiddleware(
@@ -35,7 +33,14 @@ router.get(
   )
 );
 
-// Consulter un journal
+router.patch(
+  "/:id/decloture",
+  roleMiddleware("ADMIN"),
+  journalController.decloture.bind(
+    journalController
+  )
+);
+
 router.get(
   "/:id",
   roleMiddleware(
@@ -47,7 +52,6 @@ router.get(
   )
 );
 
-// Créer une clôture
 router.post(
   "/",
   roleMiddleware(

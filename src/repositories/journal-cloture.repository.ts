@@ -1,6 +1,8 @@
 import {
   Prisma,
   StatutDemande,
+  StatutJournalCloture,
+  TypeEvenementJournalCloture,
 } from "@prisma/client";
 
 import prisma from "../config/prisma";
@@ -13,6 +15,89 @@ interface CreateJournalParams {
   demandeIds: string[];
 }
 
+interface RecloseJournalParams {
+  journalId: string;
+  responsableId: string;
+  observations?: string | null;
+  demandeIds: string[];
+}
+
+interface DeclotureJournalParams {
+  journalId: string;
+  adminId: string;
+  motif: string;
+}
+
+const journalDetailInclude = {
+  responsable: {
+    select: {
+      id: true,
+      nom: true,
+      prenom: true,
+      login: true,
+    },
+  },
+
+  demandes: {
+    orderBy: {
+      numero: "asc" as const,
+    },
+
+    select: {
+      id: true,
+      numero: true,
+      nomDemandeur: true,
+      prenomDemandeur: true,
+      cin: true,
+      nature: true,
+
+      titreFoncier: {
+        select: {
+          numero: true,
+
+          gouvernorat: {
+            select: {
+              id: true,
+              code: true,
+              nom: true,
+            },
+          },
+        },
+      },
+
+      prestation: {
+        select: {
+          id: true,
+          code: true,
+          libelle: true,
+        },
+      },
+
+      referenceFonciere: true,
+      statut: true,
+      motifRejet: true,
+      updatedAt: true,
+    },
+  },
+
+  evenements: {
+    orderBy: {
+      dateEvenement: "asc" as const,
+    },
+
+    include: {
+      auteur: {
+        select: {
+          id: true,
+          nom: true,
+          prenom: true,
+          login: true,
+        },
+      },
+    },
+  },
+} satisfies Prisma.JournalClotureInclude;
+
 export class JournalClotureRepository {
   async findByDate(
     dateJour: Date
@@ -20,6 +105,14 @@ export class JournalClotureRepository {
     return prisma.journalCloture.findUnique({
       where: {
         dateJour,
+      },
+
+      include: {
+        _count: {
+          select: {
+            demandes: true,
+          },
+        },
       },
     });
   }
@@ -44,18 +137,6 @@ export class JournalClotureRepository {
     });
   }
 
-  /**
-   * Retourne uniquement les demandes :
-   *
-   * - validées au niveau du guichet ;
-   * - non encore rattachées à un journal ;
-   * - dont la validation a été réalisée
-   *   pendant la journée sélectionnée.
-   *
-   * Les anciennes demandes REJETEE ne font
-   * plus partie du workflow de clôture du
-   * Responsable Guichet.
-   */
   async findEligibleDemandes(
     startDate: Date,
     endDate: Date
@@ -63,9 +144,7 @@ export class JournalClotureRepository {
     return prisma.demande.findMany({
       where: {
         journalClotureId: null,
-
-        statut:
-          StatutDemande.VALIDEE,
+        statut: StatutDemande.VALIDEE,
 
         historiqueStatuts: {
           some: {
@@ -90,8 +169,6 @@ export class JournalClotureRepository {
         nomDemandeur: true,
         prenomDemandeur: true,
         cin: true,
-
-        // Nouveau modèle métier.
         nature: true,
 
         titreFoncier: {
@@ -116,11 +193,44 @@ export class JournalClotureRepository {
           },
         },
 
-        // Conservé temporairement pour les
-        // anciennes demandes créées avant la
-        // migration du modèle métier.
         referenceFonciere: true,
+        statut: true,
+        updatedAt: true,
+      },
+    });
+  }
 
+  async findDemandesEnCoursForDay(
+    startDate: Date,
+    endDate: Date
+  ) {
+    return prisma.demande.findMany({
+      where: {
+        statut:
+          StatutDemande.EN_COURS,
+
+        historiqueStatuts: {
+          some: {
+            nouveauStatut:
+              StatutDemande.EN_COURS,
+
+            createdAt: {
+              gte: startDate,
+              lt: endDate,
+            },
+          },
+        },
+      },
+
+      orderBy: {
+        updatedAt: "asc",
+      },
+
+      select: {
+        id: true,
+        numero: true,
+        nomDemandeur: true,
+        prenomDemandeur: true,
         statut: true,
         updatedAt: true,
       },
@@ -141,6 +251,8 @@ export class JournalClotureRepository {
             data: {
               numero,
               dateJour,
+              statut:
+                StatutJournalCloture.CLOTURE,
 
               observations:
                 observations || null,
@@ -153,36 +265,175 @@ export class JournalClotureRepository {
 
               demandes: {
                 connect: demandeIds.map(
-                  (id) => ({
-                    id,
-                  })
+                  (id) => ({ id })
                 ),
-              },
-            },
-
-            include: {
-              responsable: {
-                select: {
-                  id: true,
-                  nom: true,
-                  prenom: true,
-                  login: true,
-                },
-              },
-
-              demandes: {
-                select: {
-                  id: true,
-                  numero: true,
-                  nomDemandeur: true,
-                  prenomDemandeur: true,
-                  statut: true,
-                },
               },
             },
           });
 
-        return journal;
+        await tx.journalClotureEvenement.create({
+          data: {
+            journalClotureId:
+              journal.id,
+            type:
+              TypeEvenementJournalCloture.CLOTURE,
+            auteurId:
+              responsableId,
+            motif:
+              observations || null,
+            dateEvenement:
+              journal.dateCloture,
+          },
+        });
+
+        return tx.journalCloture.findUniqueOrThrow({
+          where: {
+            id: journal.id,
+          },
+          include:
+            journalDetailInclude,
+        });
+      }
+    );
+  }
+
+  async recloseWithDemandes({
+    journalId,
+    responsableId,
+    observations,
+    demandeIds,
+  }: RecloseJournalParams) {
+    return prisma.$transaction(
+      async (tx) => {
+        const now = new Date();
+
+        await tx.journalCloture.update({
+          where: {
+            id: journalId,
+          },
+
+          data: {
+            statut:
+              StatutJournalCloture.CLOTURE,
+            dateCloture: now,
+            responsableId,
+            observations:
+              observations || null,
+
+            ...(demandeIds.length > 0 && {
+              demandes: {
+                connect: demandeIds.map(
+                  (id) => ({ id })
+                ),
+              },
+            }),
+          },
+        });
+
+        await tx.journalClotureEvenement.create({
+          data: {
+            journalClotureId:
+              journalId,
+            type:
+              TypeEvenementJournalCloture.CLOTURE,
+            auteurId:
+              responsableId,
+            motif:
+              observations || null,
+            dateEvenement: now,
+          },
+        });
+
+        return tx.journalCloture.findUniqueOrThrow({
+          where: {
+            id: journalId,
+          },
+          include:
+            journalDetailInclude,
+        });
+      }
+    );
+  }
+
+  async decloture({
+    journalId,
+    adminId,
+    motif,
+  }: DeclotureJournalParams) {
+    return prisma.$transaction(
+      async (tx) => {
+        const journal =
+          await tx.journalCloture.findUniqueOrThrow({
+            where: {
+              id: journalId,
+            },
+          });
+
+        const clotureEvent =
+          await tx.journalClotureEvenement.findFirst({
+            where: {
+              journalClotureId:
+                journalId,
+              type:
+                TypeEvenementJournalCloture.CLOTURE,
+            },
+          });
+
+        /*
+         * Les journaux créés avant la migration de la déclôture
+         * n'ont pas encore d'événement CLOTURE. On crée une trace
+         * historique à partir des informations déjà présentes.
+         */
+        if (!clotureEvent) {
+          await tx.journalClotureEvenement.create({
+            data: {
+              journalClotureId:
+                journalId,
+              type:
+                TypeEvenementJournalCloture.CLOTURE,
+              auteurId:
+                journal.responsableId,
+              motif:
+                journal.observations || null,
+              dateEvenement:
+                journal.dateCloture,
+            },
+          });
+        }
+
+        const now = new Date();
+
+        await tx.journalCloture.update({
+          where: {
+            id: journalId,
+          },
+
+          data: {
+            statut:
+              StatutJournalCloture.DECLOTUREE,
+          },
+        });
+
+        await tx.journalClotureEvenement.create({
+          data: {
+            journalClotureId:
+              journalId,
+            type:
+              TypeEvenementJournalCloture.DECLOTURE,
+            auteurId:
+              adminId,
+            motif,
+            dateEvenement: now,
+          },
+        });
+
+        return tx.journalCloture.findUniqueOrThrow({
+          where: {
+            id: journalId,
+          },
+          include:
+            journalDetailInclude,
+        });
       }
     );
   }
@@ -203,53 +454,44 @@ export class JournalClotureRepository {
           numero: {
             contains:
               normalizedSearch,
-
             mode: "insensitive",
           },
         },
-
         {
           observations: {
             contains:
               normalizedSearch,
-
             mode: "insensitive",
           },
         },
-
         {
           responsable: {
             is: {
               nom: {
                 contains:
                   normalizedSearch,
-
                 mode: "insensitive",
               },
             },
           },
         },
-
         {
           responsable: {
             is: {
               prenom: {
                 contains:
                   normalizedSearch,
-
                 mode: "insensitive",
               },
             },
           },
         },
-
         {
           responsable: {
             is: {
               login: {
                 contains:
                   normalizedSearch,
-
                 mode: "insensitive",
               },
             },
@@ -313,11 +555,8 @@ export class JournalClotureRepository {
       total,
       page,
       limit,
-
       totalPages:
-        Math.ceil(
-          total / limit
-        ),
+        Math.ceil(total / limit),
     };
   }
 
@@ -328,65 +567,8 @@ export class JournalClotureRepository {
       where: {
         id,
       },
-
-      include: {
-        responsable: {
-          select: {
-            id: true,
-            nom: true,
-            prenom: true,
-            login: true,
-          },
-        },
-
-        demandes: {
-          orderBy: {
-            numero: "asc",
-          },
-
-          select: {
-            id: true,
-            numero: true,
-            nomDemandeur: true,
-            prenomDemandeur: true,
-            cin: true,
-
-            // Nouveau modèle métier.
-            nature: true,
-
-            titreFoncier: {
-              select: {
-                numero: true,
-
-                gouvernorat: {
-                  select: {
-                    id: true,
-                    code: true,
-                    nom: true,
-                  },
-                },
-              },
-            },
-
-            prestation: {
-              select: {
-                id: true,
-                code: true,
-                libelle: true,
-              },
-            },
-
-            // Champ historique conservé pour
-            // afficher correctement les dossiers
-            // issus de l'ancien modèle.
-            referenceFonciere: true,
-
-            statut: true,
-            motifRejet: true,
-            updatedAt: true,
-          },
-        },
-      },
+      include:
+        journalDetailInclude,
     });
   }
 }

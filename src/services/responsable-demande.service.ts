@@ -33,6 +33,10 @@ import {
   TarificationService,
 } from "./tarification.service";
 
+import {
+  GuichetJourneeService,
+} from "./guichet-journee.service";
+
 export class ResponsableDemandeService {
   private demandeRepository =
     new DemandeRepository();
@@ -42,6 +46,9 @@ export class ResponsableDemandeService {
 
   private revisionRepository =
     new RevisionDemandeRepository();
+
+  private guichetJourneeService =
+    new GuichetJourneeService();
 
   /**
    * Compare deux listes d'identifiants comme des ensembles.
@@ -96,6 +103,17 @@ export class ResponsableDemandeService {
         403
       );
     }
+
+    /*
+     * Une fois la journée du guichet clôturée,
+     * aucune nouvelle correction métier ne peut
+     * être enregistrée par le Responsable.
+     *
+     * Le paiement complémentaire reste traité
+     * séparément et peut intervenir ultérieurement.
+     */
+    await this.guichetJourneeService
+      .assertJourneeOuverte();
 
     const demande =
       await this.demandeRepository
