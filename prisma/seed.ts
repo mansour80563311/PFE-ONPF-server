@@ -480,12 +480,12 @@ async function main() {
     },
     update: {
       description:
-        "Responsable chargé du contrôle et du traitement des demandes",
+        "Responsable Guichet chargé du contrôle et de la validation des demandes",
     },
     create: {
       nom: "RESPONSABLE",
       description:
-        "Responsable chargé du contrôle et du traitement des demandes",
+        "Responsable Guichet chargé du contrôle et de la validation des demandes",
     },
   });
 
@@ -499,6 +499,66 @@ async function main() {
     create: {
       nom: "CAISSIER",
       description: "Agent chargé de l'encaissement des paiements",
+    },
+  });
+
+  await prisma.role.upsert({
+    where: {
+      nom: "RESPONSABLE_INSCRIPTIONS",
+    },
+    update: {
+      description:
+        "Responsable chargé de la distribution et de la clôture des opérations du service d'étude",
+    },
+    create: {
+      nom: "RESPONSABLE_INSCRIPTIONS",
+      description:
+        "Responsable chargé de la distribution et de la clôture des opérations du service d'étude",
+    },
+  });
+
+  await prisma.role.upsert({
+    where: {
+      nom: "REDACTEUR",
+    },
+    update: {
+      description:
+        "Agent chargé de l'étude initiale des opérations foncières et de la préparation des minutes ou motifs de refus",
+    },
+    create: {
+      nom: "REDACTEUR",
+      description:
+        "Agent chargé de l'étude initiale des opérations foncières et de la préparation des minutes ou motifs de refus",
+    },
+  });
+
+  await prisma.role.upsert({
+    where: {
+      nom: "VERIFICATEUR",
+    },
+    update: {
+      description:
+        "Agent chargé de la vérification des avis et travaux du Rédacteur",
+    },
+    create: {
+      nom: "VERIFICATEUR",
+      description:
+        "Agent chargé de la vérification des avis et travaux du Rédacteur",
+    },
+  });
+
+  await prisma.role.upsert({
+    where: {
+      nom: "SUPER_VERIFICATEUR",
+    },
+    update: {
+      description:
+        "Agent chargé du contrôle final et de la décision définitive sur les opérations étudiées",
+    },
+    create: {
+      nom: "SUPER_VERIFICATEUR",
+      description:
+        "Agent chargé du contrôle final et de la décision définitive sur les opérations étudiées",
     },
   });
 

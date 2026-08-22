@@ -215,9 +215,9 @@ export class UserRepository {
     });
   }
 
-    /*
-  * Vérifier l’existence d’un rôle.
-  */
+  /*
+   * Vérifier l’existence d’un rôle.
+   */
   async findRoleById(
     id: string
   ) {
@@ -230,6 +230,42 @@ export class UserRepository {
         id: true,
         nom: true,
       },
+    });
+  }
+
+  /*
+   * Retourne uniquement les comptes actifs
+   * possédant le rôle métier demandé.
+   *
+   * Utilisé par le Responsable des inscriptions
+   * pour préparer la distribution d'un dossier.
+   */
+  async findActiveByRoleName(
+    roleName: string
+  ) {
+    return prisma.utilisateur.findMany({
+      where: {
+        statut: true,
+
+        role: {
+          is: {
+            nom:
+              roleName,
+          },
+        },
+      },
+
+      orderBy: [
+        {
+          nom: "asc",
+        },
+        {
+          prenom: "asc",
+        },
+      ],
+
+      select:
+        utilisateurPublicSelect,
     });
   }
 

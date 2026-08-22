@@ -51,6 +51,31 @@ model Utilisateur {
 
   journauxCaisse JournalCaisse[] @relation("JournalCaisseCaissier")
 
+  // ========================================================
+  // SERVICE D'ETUDE
+  // ========================================================
+
+  // Dossiers distribués par le Responsable des inscriptions.
+  dossiersEtudeDistribues DossierEtude[] @relation("DossierEtudeDistribuePar")
+
+  // Affectations reçues comme Rédacteur / Vérificateur / Super-vérificateur.
+  affectationsEtudeRecues AffectationEtude[] @relation("AffectationEtudeUtilisateur")
+
+  // Affectations / réaffectations décidées par le Responsable des inscriptions.
+  affectationsEtudeAttribuees AffectationEtude[] @relation("AffectationEtudeAttribuePar")
+
+  // Avis successifs émis pendant l'étude d'une opération.
+  avisEtudeRediges AvisEtude[] @relation("AvisEtudeAuteur")
+
+  // Versions de minutes rédigées ou modifiées.
+  versionsMinuteRedigees VersionMinute[] @relation("VersionMinuteAuteur")
+
+  // Retours pour correction émis pendant le circuit d'étude.
+  retoursCorrectionEmis RetourCorrection[] @relation("RetourCorrectionAuteur")
+
+  // Retours pour correction reçus pendant le circuit d'étude.
+  retoursCorrectionRecus RetourCorrection[] @relation("RetourCorrectionDestinataire")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -117,6 +142,55 @@ enum StatutJournalCloture {
 enum TypeEvenementJournalCloture {
   CLOTURE
   DECLOTURE
+}
+
+// ============================================================
+// ENUMERATIONS DU SERVICE D'ETUDE
+// ============================================================
+
+// Etat global du dossier dans le service d'étude.
+// Le dossier n'est créé qu'au moment de sa distribution.
+enum StatutDossierEtude {
+  EN_ETUDE
+  TERMINE
+}
+
+// Type d'affectation décidée par le Responsable des inscriptions.
+enum TypeAffectationEtude {
+  REDACTEUR
+  VERIFICATEUR
+  SUPER_VERIFICATEUR
+}
+
+// Etat de traitement d'une opération foncière au service d'étude.
+enum StatutEtudeOperation {
+  EN_REDACTION
+  EN_VERIFICATION
+  A_CORRIGER_REDACTEUR
+  EN_SUPER_VERIFICATION
+  A_CORRIGER_VERIFICATEUR
+  FINALISEE
+  CLOTUREE
+}
+
+// Niveau métier ayant émis un avis.
+// Il est historisé indépendamment du rôle courant de l'utilisateur.
+enum NiveauAvisEtude {
+  REDACTEUR
+  VERIFICATEUR
+  SUPER_VERIFICATEUR
+}
+
+// Décision portée par un avis d'étude.
+enum DecisionAvisEtude {
+  INSCRIPTION
+  REFUS
+}
+
+// Origine de préparation de la minute.
+enum ModePreparationMinute {
+  MODELE
+  MANUEL
 }
 
 // ============================================================
@@ -244,6 +318,10 @@ model DemandeOperationFonciere {
 
   typeOperationFonciereId String
   typeOperationFonciere   TypeOperationFonciere @relation(fields: [typeOperationFonciereId], references: [id], onDelete: Restrict)
+
+  // Une occurrence d'opération d'une demande possède au maximum
+  // une seule étude dans le service d'étude.
+  etudeOperation EtudeOperation?
 
   createdAt DateTime @default(now())
 
@@ -447,6 +525,11 @@ model Demande {
   // Compléments éventuellement encaissés pour cette demande.
   paiementsComplementaires PaiementComplementaire[]
 
+  // Dossier du service d'étude.
+  // Seules les demandes d'INSCRIPTION validées et clôturées au guichet
+  // pourront en posséder un.
+  dossierEtude DossierEtude?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -458,6 +541,305 @@ model Demande {
   @@index([nature])
   @@index([titreFoncierId])
   @@index([prestationId])
+}
+
+// ============================================================
+// SERVICE D'ETUDE - SOCLE
+// ============================================================
+
+/**
+ * Le dossier d'étude représente l'entrée d'une demande d'INSCRIPTION
+ * dans le service d'étude.
+ * Il est créé au moment de la distribution par le Responsable
+ * des inscriptions, après validation et clôture au guichet.
+ * Le résultat juridique n'est pas porté par ce dossier :
+ * chaque opération foncière possède sa propre EtudeOperation.
+ */
+model DossierEtude {
+  id String @id @default(uuid())
+
+  // Une demande ne peut posséder qu'un seul dossier d'étude.
+  demandeId String  @unique
+  demande   Demande @relation(fields: [demandeId], references: [id], onDelete: Restrict)
+
+  statut StatutDossierEtude @default(EN_ETUDE)
+
+  // Responsable des inscriptions ayant réalisé la distribution initiale.
+  distribueParId String
+  distribuePar   Utilisateur @relation("DossierEtudeDistribuePar", fields: [distribueParId], references: [id], onDelete: Restrict)
+
+  dateDistribution DateTime @default(now())
+
+  // Historique des affectations et réaffectations.
+  affectations AffectationEtude[]
+
+  // Une étude indépendante est créée pour chaque opération de la demande.
+  etudesOperations EtudeOperation[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([statut])
+  @@index([distribueParId])
+  @@index([dateDistribution])
+}
+
+/**
+ * Une affectation associe un dossier d'étude à un agent pour un rôle
+ * métier donné : Rédacteur, Vérificateur ou Super-vérificateur.
+ * Les anciennes affectations ne sont jamais supprimées :
+ * une réaffectation clôt l'affectation précédente avec dateFin
+ * puis crée une nouvelle affectation active.
+ * Règle métier contrôlée côté service :
+ * exactement une affectation active par type et par dossier.
+ */
+model AffectationEtude {
+  id String @id @default(uuid())
+
+  dossierEtudeId String
+  dossierEtude   DossierEtude @relation(fields: [dossierEtudeId], references: [id], onDelete: Restrict)
+
+  type TypeAffectationEtude
+
+  // Agent affecté.
+  utilisateurId String
+  utilisateur   Utilisateur @relation("AffectationEtudeUtilisateur", fields: [utilisateurId], references: [id], onDelete: Restrict)
+
+  // Responsable des inscriptions ayant effectué l'affectation.
+  attribueParId String
+  attribuePar   Utilisateur @relation("AffectationEtudeAttribuePar", fields: [attribueParId], references: [id], onDelete: Restrict)
+
+  dateDebut DateTime  @default(now())
+  dateFin   DateTime?
+
+  // Renseigné notamment lors d'une réaffectation.
+  motifReaffectation String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([dossierEtudeId])
+  @@index([dossierEtudeId, type])
+  @@index([utilisateurId])
+  @@index([utilisateurId, dateFin])
+  @@index([attribueParId])
+  @@index([dateDebut])
+}
+
+/**
+ * Unité centrale du service d'étude.
+ * Chaque opération foncière d'une demande est étudiée séparément et
+ * ne peut posséder qu'une seule EtudeOperation.
+ * Les avis, minutes, refus et décisions seront ajoutés dans les
+ * migrations suivantes sans modifier la logique du guichet.
+ */
+model EtudeOperation {
+  id String @id @default(uuid())
+
+  dossierEtudeId String
+  dossierEtude   DossierEtude @relation(fields: [dossierEtudeId], references: [id], onDelete: Restrict)
+
+  // Relation 1 -> 0..1 avec l'opération existante de la demande.
+  demandeOperationFonciereId String                   @unique
+  demandeOperationFonciere   DemandeOperationFonciere @relation(fields: [demandeOperationFonciereId], references: [id], onDelete: Restrict)
+
+  statut StatutEtudeOperation @default(EN_REDACTION)
+
+  // Historique complet des avis du Rédacteur, du Vérificateur
+  // et du Super-vérificateur.
+  avis AvisEtude[] @relation("AvisEtudeOperation")
+
+  // Avis retenu comme décision finale par le Super-vérificateur.
+  // Il reste nul tant que l'opération n'est pas FINALISEE.
+  avisFinalId String?    @unique
+  avisFinal   AvisEtude? @relation("AvisFinalEtudeOperation", fields: [avisFinalId], references: [id], onDelete: Restrict)
+
+  // Minute logique de l'opération en cas d'orientation INSCRIPTION.
+  minuteInscription MinuteInscription?
+
+  // Historique des retours pour correction.
+  retoursCorrection RetourCorrection[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([dossierEtudeId])
+  @@index([dossierEtudeId, statut])
+  @@index([statut])
+}
+
+// ============================================================
+// SERVICE D'ETUDE - TRAITEMENT ET VERSIONNEMENT
+// ============================================================
+
+/**
+ * Un avis représente une prise de position métier à un instant donné.
+ * Plusieurs avis peuvent être conservés pour un même niveau et une même
+ * opération afin de préserver les cycles de correction et les divergences.
+ * numeroAvis est incrémenté côté service pour chaque couple
+ * (EtudeOperation, niveau).
+ */
+model AvisEtude {
+  id String @id @default(uuid())
+
+  etudeOperationId String
+  etudeOperation   EtudeOperation @relation("AvisEtudeOperation", fields: [etudeOperationId], references: [id], onDelete: Restrict)
+
+  niveau   NiveauAvisEtude
+  decision DecisionAvisEtude
+
+  numeroAvis Int
+
+  // Snapshot métier du niveau ayant émis l'avis.
+  // L'auteur reste également conservé même si son rôle change plus tard.
+  auteurId String
+  auteur   Utilisateur @relation("AvisEtudeAuteur", fields: [auteurId], references: [id], onDelete: Restrict)
+
+  observations String? @db.Text
+
+  // Un avis de REFUS peut porter un ou plusieurs motifs.
+  motifsRefus MotifRefus[]
+
+  // Retour(s) pour correction éventuellement déclenché(s) à partir de cet avis.
+  retoursCorrectionDeclenches RetourCorrection[] @relation("RetourCorrectionAvisSource")
+
+  // Relation inverse de EtudeOperation.avisFinal.
+  // Au maximum une opération peut retenir cet avis comme avis final.
+  decisionFinaleDe EtudeOperation? @relation("AvisFinalEtudeOperation")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([etudeOperationId, niveau, numeroAvis])
+  @@index([etudeOperationId])
+  @@index([etudeOperationId, niveau])
+  @@index([auteurId])
+  @@index([decision])
+  @@index([createdAt])
+}
+
+/**
+ * Motif de refus rattaché à l'avis qui l'a produit.
+ * Lorsqu'un avis est corrigé, l'ancien avis et ses anciens motifs restent
+ * intacts : un nouvel AvisEtude est créé avec ses propres motifs.
+ */
+model MotifRefus {
+  id String @id @default(uuid())
+
+  avisEtudeId String
+  avisEtude   AvisEtude @relation(fields: [avisEtudeId], references: [id], onDelete: Restrict)
+
+  texte String @db.Text
+  ordre Int    @default(1)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([avisEtudeId, ordre])
+  @@index([avisEtudeId])
+}
+
+/**
+ * Minute logique d'une opération orientée vers l'INSCRIPTION.
+ * Une opération possède au maximum une minute logique, mais cette minute
+ * peut posséder autant de versions que nécessaire.
+ * versionFinaleId reste nul pendant la rédaction/correction puis pointe
+ * vers la version définitivement retenue.
+ */
+model MinuteInscription {
+  id String @id @default(uuid())
+
+  etudeOperationId String         @unique
+  etudeOperation   EtudeOperation @relation(fields: [etudeOperationId], references: [id], onDelete: Restrict)
+
+  modePreparation ModePreparationMinute
+  referenceModele String?
+
+  versions VersionMinute[] @relation("VersionsMinuteInscription")
+
+  versionFinaleId String?        @unique
+  versionFinale   VersionMinute? @relation("VersionFinaleMinute", fields: [versionFinaleId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([modePreparation])
+}
+
+/**
+ * Version immuable du contenu d'une minute.
+ * Une modification ne remplace jamais une ancienne version : elle crée
+ * une nouvelle VersionMinute avec un numéro supérieur.
+ * niveauAuteur mémorise le niveau métier au moment de la rédaction afin
+ * de permettre notamment une modification finale par le Super-vérificateur.
+ */
+model VersionMinute {
+  id String @id @default(uuid())
+
+  minuteInscriptionId String
+  minuteInscription   MinuteInscription @relation("VersionsMinuteInscription", fields: [minuteInscriptionId], references: [id], onDelete: Restrict)
+
+  numeroVersion Int
+
+  contenu String @db.Text
+
+  auteurId String
+  auteur   Utilisateur @relation("VersionMinuteAuteur", fields: [auteurId], references: [id], onDelete: Restrict)
+
+  niveauAuteur NiveauAvisEtude
+
+  // Relation inverse de MinuteInscription.versionFinale.
+  minuteFinaleDe MinuteInscription? @relation("VersionFinaleMinute")
+
+  createdAt DateTime @default(now())
+
+  @@unique([minuteInscriptionId, numeroVersion])
+  @@index([minuteInscriptionId])
+  @@index([auteurId])
+  @@index([createdAt])
+}
+
+/**
+ * Trace d'un renvoi pour correction entre deux niveaux du circuit.
+ * Chaînes autorisées fonctionnellement :
+ * - VERIFICATEUR -> REDACTEUR
+ * - SUPER_VERIFICATEUR -> VERIFICATEUR
+ * - VERIFICATEUR -> REDACTEUR après un retour du Super-vérificateur
+ * Ces règles sont contrôlées par le service backend.
+ */
+model RetourCorrection {
+  id String @id @default(uuid())
+
+  etudeOperationId String
+  etudeOperation   EtudeOperation @relation(fields: [etudeOperationId], references: [id], onDelete: Restrict)
+
+  deNiveau   NiveauAvisEtude
+  versNiveau NiveauAvisEtude
+
+  auteurId String
+  auteur   Utilisateur @relation("RetourCorrectionAuteur", fields: [auteurId], references: [id], onDelete: Restrict)
+
+  destinataireId String
+  destinataire   Utilisateur @relation("RetourCorrectionDestinataire", fields: [destinataireId], references: [id], onDelete: Restrict)
+
+  // Facultatif : avis ayant directement conduit au retour.
+  avisSourceId String?
+  avisSource   AvisEtude? @relation("RetourCorrectionAvisSource", fields: [avisSourceId], references: [id], onDelete: Restrict)
+
+  motif String @db.Text
+
+  dateRetour     DateTime  @default(now())
+  dateTraitement DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([etudeOperationId])
+  @@index([auteurId])
+  @@index([destinataireId])
+  @@index([avisSourceId])
+  @@index([dateRetour])
+  @@index([dateTraitement])
 }
 
 // ============================================================

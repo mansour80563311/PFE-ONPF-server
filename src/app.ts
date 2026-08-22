@@ -12,6 +12,7 @@ import cniRoutes from "./routes/cni.routes";
 import journalCaisseRoutes from "./routes/journal-caisse.routes";
 import referentielRoutes from "./routes/referentiel.routes";
 import tarificationRoutes from "./routes/tarification.routes";
+import serviceEtudeRoutes from "./routes/service-etude.routes";
 
 import {
   errorMiddleware,
@@ -104,6 +105,14 @@ app.use(
 app.use(
   "/api/tarification",
   tarificationRoutes
+);
+
+/*
+ * Service d'étude des demandes d'inscription.
+ */
+app.use(
+  "/api/etudes",
+  serviceEtudeRoutes
 );
 
 /*
